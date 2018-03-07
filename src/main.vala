@@ -225,6 +225,43 @@ class SystemProvider {
     }
   }
 
+  public static File[] list(File path, FileType? file_type = null) {
+    FileEnumerator enumerator = null;
+    File[] files = {};
+
+    try {
+      enumerator = path.enumerate_children("standard::*",
+                                           FileQueryInfoFlags.NOFOLLOW_SYMLINKS);
+    } catch (Error e) {
+      warn("Failed to list %s: %s", path.get_path(), e.message);
+      return files;
+    }
+
+    while (true) {
+      FileInfo info = null;
+
+      try {
+        info = enumerator.next_file();
+      } catch (Error e) {
+        warn("Failed to enumerate next file inside %s: %s", path.get_path(), e.message);
+        break;
+      }
+
+      if (info == null) {
+        break;
+      }
+
+      if (file_type == null || info.get_file_type() == file_type) {
+        files += path.get_child(info.get_name());
+      } else {
+        warn("Unexpected file %s of type %s inside %s.", info.get_name(),
+             info.get_file_type().to_string(), path.get_path());
+      }
+    }
+
+    return files;
+  }
+
   public static void recursive_remove(File path) {
     FileEnumerator enumerator = null;
 
@@ -820,7 +857,7 @@ class UpdateCommand : Command {
 
 class ListCommand : Command {
   public override string name {
-    get { return ""; }
+    get { return "list"; }
   }
   public override string usage {
     get { return "all|targets|units"; }
@@ -834,42 +871,6 @@ class ListCommand : Command {
   public const OptionEntry[] options = {
     {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "terse", null},
   };
-
-  private File[] listdir(File path) {
-    FileEnumerator enumerator = null;
-    File[] files = {};
-
-    try {
-      enumerator = path.enumerate_children("standard::*",
-                                           FileQueryInfoFlags.NOFOLLOW_SYMLINKS);
-    } catch (Error e) {
-      warn("Failed to list %s: %s", path.get_path(), e.message);
-      return files;
-    }
-
-    while (true) {
-      FileInfo info = null;
-
-      try {
-        info = enumerator.next_file();
-      } catch (Error e) {
-        warn("Failed to enumerate next file inside %s: %s", path.get_path(), e.message);
-        break;
-      }
-
-      if (info == null) {
-        break;
-      }
-
-      if (info.get_file_type() == FileType.DIRECTORY) {
-        files += path.get_child(info.get_name());
-      } else {
-        warn("Non-directory %s inside %s.", info.get_name(), path.get_path());
-      }
-    }
-
-    return files;
-  }
 
   public override void run(string[] args) {
     if (args.length != 1) {
@@ -886,11 +887,12 @@ class ListCommand : Command {
       dirs += "unit";
     }
 
-    foreach (var dir in dirs) {
+    foreach (var dirname in dirs) {
       var items = new ArrayList<string>();
-      var sect = dir == "target" ? "Target" : "Unit";
+      var sect = dirname == "target" ? "Target" : "Unit";
 
-      foreach (var path in listdir(SystemProvider.get_storage_dir().get_child(dir))) {
+      var dir = SystemProvider.get_storage_dir().get_child(dirname);
+      foreach (var path in SystemProvider.list(dir, FileType.DIRECTORY)) {
         var config = path.get_child("config");
 
         var kf = new KeyFile();
@@ -903,6 +905,8 @@ class ListCommand : Command {
         }
       }
 
+      items.sort();
+
       if (!arg_terse) {
         println("![yellow]%ss:", sect);
         foreach (var item in items) {
@@ -911,12 +915,68 @@ class ListCommand : Command {
       } else {
         foreach (var item in items) {
           if (args[0] == "all") {
-            println("%s: %s", dir, item);
+            println("%s: %s", dirname, item);
           } else {
             println("%s", item);
           }
         }
       }
+    }
+  }
+}
+
+class RemoveCommand : Command {
+  public override string name {
+    get { return "remove"; }
+  }
+  public override string usage {
+    get { return "targets|units"; }
+  }
+  public override string description {
+    get { return "Remove targets or units."; }
+  }
+
+  public const OptionEntry[] options = {};
+
+  public override void run(string[] args) {
+    if (args.length == 1) {
+      fail("Expected at least 2 arguments.");
+    } else if (args[0] != "targets" && args[0] != "units") {
+      fail("Expected 'targets' or 'units', got '%s'.", args[0]);
+    }
+
+    var dirname = args[0][0:args[0].length - 1];
+    var dir = SystemProvider.get_storage_dir().get_child(dirname);
+    var sect = dirname == "target" ? "Target" : "Unit";
+
+    var to_remove = new HashSet<string>();
+    foreach (var arg in args[1:args.length]) {
+      to_remove.add(arg);
+    }
+
+    foreach (var path in SystemProvider.list(dir, FileType.DIRECTORY)) {
+      // XXX: largely copied from ListCommand.
+      var config = path.get_child("config");
+      string name = "";
+
+      var kf = new KeyFile();
+      try {
+        kf.load_from_file(config.get_path(), KeyFileFlags.NONE);
+        name = kf.get_string(sect, "Name");
+      } catch (Error e) {
+        warn("Failed to retrieve name from %s: %s", path.get_path(), e.message);
+        continue;
+      }
+
+      if (name in to_remove) {
+        println("Removing ![cyan]%s![/]...", name);
+        SystemProvider.recursive_remove(path);
+        to_remove.remove(name);
+      }
+    }
+
+    foreach (var name in to_remove) {
+      warn("Failed to locate %s: %s", dirname, name);
     }
   }
 }
@@ -957,7 +1017,7 @@ class Main : Object {
       blankln();
 
       Command[] commands = {new TargetCommand(), new UpdateCommand(),
-                            new ListCommand()};
+                            new ListCommand(), new RemoveCommand()};
       foreach (var cmd in commands) {
         println("![yellow]  %-8s![/]%s", cmd.name, cmd.description);
       }
@@ -1007,6 +1067,10 @@ class Main : Object {
       case "list":
         command = new ListCommand();
         append_options((OptionEntry[])ListCommand.options);
+        break;
+      case "remove":
+        command = new RemoveCommand();
+        append_options((OptionEntry[])RemoveCommand.options);
         break;
       }
     }
