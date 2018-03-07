@@ -1,7 +1,7 @@
 name=alpine
 type=base
 props=(mirror version)
-rel='2018-03-07T16:55:07'
+rel='2018-03-07T17:49:11'
 
 prop_mirror=http://nl.alpinelinux.org/alpine
 prop_version=3.7

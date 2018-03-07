@@ -79,7 +79,7 @@ void fail(string message, ...) {
 
 abstract class UnitPath {
   public HashMap<string, string> props { get; protected set; }
-  public string description { get; protected set; }
+  public string path { get; protected set; }
 
   private File retrieve_cache = null;
 
@@ -91,9 +91,10 @@ abstract class UnitPath {
     return result;
   }
 
-  public static UnitPath parse(string path_, File? relative_to = null) {
+  public static UnitPath parse(string path_, string? relative_to_ = null) {
     var path = path_;
     var props = new HashMap<string, string>();
+    var relative_to = relative_to_ ?? Environment.get_current_dir();
 
     if ("{" in path) {
       var re_props = /^(.+){(.+)}$/;
@@ -117,10 +118,10 @@ abstract class UnitPath {
 
     if (path.has_prefix("file:")) {
       var file_path = path[5:path.length];
-      if (relative_to != null && file_path[0] != '/') {
-        file_path = @"$(relative_to.get_path())/$file_path";
+      if (relative_to != null && !Path.is_absolute(file_path)) {
+        file_path = @"$relative_to/$file_path";
       }
-      return new FileUnitPath(props, path, file_path);
+      return new FileUnitPath(props, @"file:$file_path", file_path);
     }
     fail("Invalid unit path: %s", path);
     return (UnitPath)null;
@@ -139,9 +140,9 @@ abstract class UnitPath {
 class FileUnitPath : UnitPath {
   public File file { get; protected set; }
 
-  public FileUnitPath(HashMap<string, string> props, string description, string file) {
+  public FileUnitPath(HashMap<string, string> props, string path, string file) {
     this.props = props;
-    this.description = description;
+    this.path = path;
     this.file = File.new_for_path(file);
   }
 
@@ -294,6 +295,37 @@ class SystemProvider {
 
 enum UnitType { BASE, BUILDER }
 
+struct UnitStorageData {
+  string id;
+  File base;
+  File root;
+  File config;
+  File script;
+
+  public static UnitStorageData new_for_unit_name(string name,
+                                                  HashMap<string, string> given_props) {
+    var sha_builder = new Checksum(ChecksumType.SHA256);
+    sha_builder.update((uchar[])name, name.length);
+    foreach (var entry in given_props.entries) {
+      sha_builder.update((uchar[])";", 1);
+      sha_builder.update((uchar[])entry.key, entry.value.length);
+      sha_builder.update((uchar[])"=", 1);
+      sha_builder.update((uchar[])entry.value, entry.value.length);
+    }
+
+    var id = sha_builder.get_string();
+    var storage = SystemProvider.get_storage_dir().get_child("unit").get_child(id);
+
+    return UnitStorageData() {
+      id = id,
+      base = storage,
+      root = storage.get_child("root"),
+      config = storage.get_child("config"),
+      script = storage.get_child("script.rc")
+    };
+  }
+}
+
 struct Unit {
   string name;
   UnitType type;
@@ -303,38 +335,11 @@ struct Unit {
   HashMap<string, string> given_props;
   string path;
   File script;
+  UnitStorageData storage;
 }
 
-struct UnitStorageData {
-  File base;
-  File root;
-  File config;
-  File script;
-
-  public static UnitStorageData new_for_unit(Unit unit) {
-    var sha_builder = new Checksum(ChecksumType.SHA256);
-    sha_builder.update((uchar[])unit.name, unit.name.length);
-    foreach (var entry in unit.given_props.entries) {
-      sha_builder.update((uchar[])";", 1);
-      sha_builder.update((uchar[])entry.key, entry.value.length);
-      sha_builder.update((uchar[])"=", 1);
-      sha_builder.update((uchar[])entry.value, entry.value.length);
-    }
-
-    var sha = sha_builder.get_string();
-    var storage = SystemProvider.get_storage_dir().get_child(sha);
-
-    return UnitStorageData() {
-      base = storage,
-      root = storage.get_child("root"),
-      config = storage.get_child("config"),
-      script = storage.get_child("script.rc")
-    };
-  }
-}
-
-Unit[] read_units(UnitPath[] unit_paths, Unit[]? units_ = null,
-                  HashMap<string, int>? index_map_ = null) {
+Unit[] read_units(UnitPath[] unit_paths, bool require_base = true,
+                  Unit[]? units_ = null, HashMap<string, int>? index_map_ = null) {
   var units = units_ ?? new Unit[]{};
   var index_map = index_map_ ?? new HashMap<string, int>();
 
@@ -353,11 +358,11 @@ Unit[] read_units(UnitPath[] unit_paths, Unit[]? units_ = null,
       Process.spawn_sync(Environment.get_current_dir(), command, Environ.get(), 0,
                          null, null, null, out status);
     } catch (SpawnError e) {
-      fail("Spawning queryunit for %s failed: %s", unit_path.description, e.message);
+      fail("Spawning queryunit for %s failed: %s", unit_path.path, e.message);
     }
 
     if (status != 0) {
-      fail("queryunit of %s failed.", unit_path.description);
+      fail("queryunit of %s failed.", unit_path.path);
     }
 
     var kf = new KeyFile();
@@ -365,27 +370,30 @@ Unit[] read_units(UnitPath[] unit_paths, Unit[]? units_ = null,
       kf.load_from_file(temp.get_path(), KeyFileFlags.NONE);
 
       if (kf.has_group("Error")) {
-        fail("%s: %s", unit_path.description, kf.get_string("Error", "Message"));
+        fail("%s: %s", unit_path.path, kf.get_string("Error", "Message"));
       }
 
+      string name = kf.get_string("Result", "Name");
       UnitType type = kf.get_string("Result", "Type") == "base" ? UnitType.BASE :
                       UnitType.BUILDER;
       UnitPath[] dep_paths = {};
       foreach (var dep_string in kf.get_string_list("Result", "Deps")) {
-        dep_paths += UnitPath.parse(dep_string, unit_path.retrieve().get_parent());
+        dep_paths += UnitPath.parse(dep_string,
+                                    unit_path.retrieve().get_parent().get_path());
       }
 
-      var deps = read_units(dep_paths, units, index_map);
+      var deps = read_units(dep_paths, true, units, index_map);
 
       var unit = Unit() {
-        name = kf.get_string("Result", "Name"),
+        name = name,
         type = type,
         rel = kf.get_string("Result", "Rel"),
         deps = deps,
         expected_props = kf.get_string_list("Result", "Props"),
         given_props = unit_path.props,
-        path = unit_path.description,
-        script = unit_script
+        path = unit_path.path,
+        script = unit_script,
+        storage = UnitStorageData.new_for_unit_name(name, unit_path.props)
       };
 
       if (index_map.has_key(unit.name)) {
@@ -408,18 +416,26 @@ Unit[] read_units(UnitPath[] unit_paths, Unit[]? units_ = null,
       }
     } catch (Error e) {
       fail("Failed to load key-value queryunit data for %s from %s: %s",
-           unit_path.description, temp.get_path(), e.message);
+           unit_path.path, temp.get_path(), e.message);
     }
   }
 
   if (units.length != 0) {
-    if (units[0].type != UnitType.BASE) {
-      fail("First unit %s must be a base.", units[0].name);
+    int start = 0;
+    if (require_base) {
+      if (units[0].type != UnitType.BASE) {
+        fail("First unit %s must be a base.", units[0].name);
+      }
+      start = 1;
     }
-    foreach (var unit in units[1:units.length]) {
+    foreach (var unit in units[start:units.length]) {
       if (unit.type != UnitType.BUILDER) {
-        fail("%s is not the first unit, and therefore should not be a base.",
-             unit.name);
+        if (require_base) {
+          fail("%s is not the first unit, and therefore should not be a base.",
+               unit.name);
+        } else {
+          fail("%s must not be a base.", unit.name);
+        }
       }
     }
   }
@@ -455,8 +471,7 @@ void run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_c
     string[] lower = {};
 
     foreach (var layer in layers) {
-      var layer_storage = UnitStorageData.new_for_unit(layer);
-      lower += layer_storage.root.get_path().replace(":", "\\:");
+      lower += layer.storage.root.get_path().replace(":", "\\:");
     }
 
     options += @"lowerdir=$(join(lower, ":"))";
@@ -510,15 +525,13 @@ void ensure_units(Unit[] units) {
   var rc = SystemProvider.get_rc();
 
   foreach (var unit in units) {
-    var storage = UnitStorageData.new_for_unit(unit);
-
     print("Processing unit ![cyan]%s![/]... ", unit.name);
 
-    if (storage.base.query_exists()) {
-      if (storage.config.query_exists()) {
+    if (unit.storage.base.query_exists()) {
+      if (unit.storage.config.query_exists()) {
         try {
           var kf = new KeyFile();
-          kf.load_from_file(storage.config.get_path(), KeyFileFlags.NONE);
+          kf.load_from_file(unit.storage.config.get_path(), KeyFileFlags.NONE);
           if (kf.get_string("Unit", "Rel") == unit.rel) {
             println("already exists");
             continue;
@@ -528,15 +541,15 @@ void ensure_units(Unit[] units) {
         }
       }
 
-      SystemProvider.recursive_remove(storage.base);
+      SystemProvider.recursive_remove(unit.storage.base);
     }
 
     blankln();
 
-    SystemProvider.mkdir_p(storage.root);
+    SystemProvider.mkdir_p(unit.storage.root);
 
     string[] command = {rc.get_path(), "-e", createunit.get_path(),
-                        unit.script.get_path(), storage.root.get_path()};
+                        unit.script.get_path(), unit.storage.root.get_path()};
     foreach (var entry in unit.given_props.entries) {
       var found = false;
       foreach (var prop in unit.expected_props) {
@@ -570,10 +583,10 @@ void ensure_units(Unit[] units) {
     }
 
     try {
-      unit.script.copy(storage.script, 0);
+      unit.script.copy(unit.storage.script, 0);
     } catch (Error e) {
       fail("Error saving script file at %s to %s: %s", unit.script.get_path(),
-           storage.script.get_path(), e.message);
+           unit.storage.script.get_path(), e.message);
     }
 
     Unit[] layers = {};
@@ -590,7 +603,7 @@ void ensure_units(Unit[] units) {
       run_command += entry.value;
     }
 
-    run_in_unit(unit.name, storage.base, layers, run_command, unit.script);
+    run_in_unit(unit.name, unit.storage.base, layers, run_command, unit.script);
 
     string[] dep_strings = {};
     foreach (var dep in unit.deps) {
@@ -610,9 +623,68 @@ void ensure_units(Unit[] units) {
     }
 
     try {
-      kf.save_to_file(storage.config.get_path());
+      kf.save_to_file(unit.storage.config.get_path());
     } catch (FileError e) {
-      fail("Error saving unit config to %s: %s", storage.config.get_path(), e.message);
+      fail("Failed to save unit config to %s: %s", unit.storage.config.get_path(),
+           e.message);
+    }
+  }
+}
+
+struct Target {
+  string name;
+  Unit[] units;
+  File base;
+  File config;
+  File root;
+
+  public static Target read(string name, out bool present) {
+    var sha_builder = new Checksum(ChecksumType.SHA256);
+    sha_builder.update((uchar[])name, name.length);
+    var id = sha_builder.get_string();
+    var storage = SystemProvider.get_storage_dir().get_child("target").get_child(id);
+
+    present = false;
+
+    UnitPath[] unit_paths = {};
+
+    var config = storage.get_child("config");
+    if (config.query_exists()) {
+      var kf = new KeyFile();
+      try {
+        kf.load_from_file(config.get_path(), KeyFileFlags.NONE);
+        foreach (var unit_string in kf.get_string_list("Target", "Units")) {
+          unit_paths += UnitPath.parse(unit_string);
+        }
+        present = true;
+      } catch (Error e) {
+        warn("Failed to read target %s: %s", name, e.message);
+      }
+    }
+
+    return Target() {
+      name = name,
+      units = read_units(unit_paths),
+      base = storage,
+      config = config,
+      root = storage.get_child("root")
+    };
+  }
+
+  public void save() {
+    SystemProvider.mkdir_p(root);
+
+    string[] unit_strings = {};
+    foreach (var unit in units) {
+      unit_strings += unit.path;
+    }
+
+    var kf = new KeyFile();
+    try {
+      kf.set_string_list("Target", "Units", unit_strings);
+      kf.save_to_file(config.get_path());
+    } catch (Error e) {
+      fail("Failed to save target %s: %s", name, e.message);
     }
   }
 }
@@ -651,22 +723,60 @@ class TargetCommand : Command {
       fail("Expected 'set' or 'run', got '%s'.", args[0]);
     }
 
-    if (args[1] != "null") {
-      fail("TODO: support running non-null targets.");
+    Target? target = null;
+
+    if (args[1] == "null") {
+      if (args[0] == "set") {
+        fail("Cannot set null target.");
+      } else if (arg_add == null) {
+        fail("Cannot run a null target without -a/--add.");
+      }
+    } else {
+      bool present;
+      target = Target.read(args[1], out present);
+      if (target == null && !present) {
+        fail("Cannot run a non-existent target.");
+      }
     }
 
-    if (args[1] == "null" && arg_add == null) {
-      fail("Cannot run a null target without --add.");
+    var add_units = read_units(UnitPath.parse_paths(arg_add ?? ""), target == null);
+    var remove_units = read_units(UnitPath.parse_paths(arg_remove ?? ""), false);
+
+    Unit[] units = {};
+
+    var ignore = new HashSet<string>();
+    foreach (var unit in remove_units) {
+      ignore.add(unit.storage.id);
     }
 
-    var add_units = read_units(UnitPath.parse_paths(arg_add));
-    if (add_units.length == 0) {
-      fail("At least one unit is required.");
+    for (int i = 0; i < 2; i++) {
+      Unit[] unit_source;
+      if (i == 0) {
+        if (target == null) {
+          continue;
+        }
+        unit_source = target.units;
+      } else {
+        unit_source = add_units;
+      }
+      foreach (var unit in unit_source) {
+        if (!(unit.storage.id in ignore)) {
+          units += unit;
+          ignore.add(unit.storage.id);
+        }
+      }
     }
-    ensure_units(add_units);
 
-    string[] command = {"/run/isolatekit/data/bin/rc", "-l", "/.isolatekit-enter"};
-    run_in_unit("null", null, add_units, command);
+    ensure_units(units);
+
+    if (args[0] == "set") {
+      target.units = units;
+      target.save();
+    } else if (args[0] == "run") {
+      string[] command = {"/run/isolatekit/data/bin/rc", "-l", "/.isolatekit-enter"};
+      var storage_base = target != null ? target.base : null;
+      run_in_unit("null", storage_base, units, command);
+    }
   }
 }
 
