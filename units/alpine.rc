@@ -1,0 +1,33 @@
+name=alpine
+type=base
+props=(mirror version)
+rel='2018-03-07T16:55:07'
+
+prop_mirror=http://nl.alpinelinux.org/alpine
+prop_version=3.7
+
+fn create {
+  ikget $prop_mirror/v$prop_version/main/x86_64/APKINDEX.tar.gz
+  ikextract -u APKINDEX.tar.gz . APKINDEX
+
+  apktools_ver=`{grep -C1 apk-tools-static APKINDEX | tail -1 | cut -d: -f2}  #`
+  ikget $prop_mirror/v$prop_version/main/x86_64/apk-tools-static-$apktools_ver.apk \
+    apktools.apk
+  ikextract apktools.apk .
+
+  path=($path .) sbin/apk.static -X $prop_mirror/v$prop_version/main -U \
+                    --allow-untrusted --root $target --initdb add alpine-base tzdata
+}
+
+fn setup {
+  cat >/etc/apk/repositories <<EOF
+$prop_mirror/v$prop_version/main
+$prop_mirror/v$prop_version/community
+@edge $prop_mirror/edge/main
+@testing $prop_mirror/edge/testing
+EOF
+
+  apk update
+
+  echo 'exec getty -nl /bin/sh 0 /dev/console' > /.isolatekit-enter
+}

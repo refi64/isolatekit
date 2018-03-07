@@ -1,0 +1,63 @@
+. `{dirname $0}^/utils.rc  #`
+
+_out=$2
+
+echo -n >$_out
+
+fn _print {
+  echo -n $* >>$_out
+}
+
+fn _println {
+  echo $* >>$_out
+}
+
+fn _error {
+  _println [Error]
+  _println Message=$^*
+  exit
+}
+
+fn _check_present {
+  if (! _vtest $1 $2) {
+    _error ''''$2'''' must be defined.
+  }
+}
+
+. $1
+
+_check_present v name
+_check_present v type
+_check_present v rel
+
+if (~ $type base) {
+  _check_present f create
+  _check_present f setup
+  if (_vtest v deps) _error base units cannot have deps.
+} else if (~ $type builder) {
+  _check_present f run
+} else {
+  _error type must be either base or builder, not $type.
+}
+
+if (! ~ $rel [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-9][0-9]) {
+  _error rel value $rel must be a date in the format: \
+    'YYYY-MM-DD<literal T>HH:MM:SS' (e.g. '2000-01-01T00:00:00')
+}
+
+_println [Result]
+_println Name=$name
+_println Type=$type
+_println Rel=$rel
+
+_print Deps=
+for (_dep in $deps) {
+  _print $_dep^';'
+}
+_println
+
+_print Props=
+for (_prop in $props) {
+  _print $_prop^';'
+}
+_println

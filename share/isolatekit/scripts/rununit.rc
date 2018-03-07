@@ -1,0 +1,13 @@
+. /run/isolatekit/data/scripts/utils.rc
+. /run/isolatekit/script
+
+_func=$1
+shift
+
+while (! ~ $#* 0) {
+  prop_$1=$2
+  shift 2
+}
+
+path=(/run/isolatekit/data/sbin $path) $_func
+exit

@@ -1,0 +1,9 @@
+name=alpine/sdk
+type=builder
+props=()
+rel='2018-03-06T00:10:51'
+deps=(file:../alpine.rc)
+
+fn run {
+  apk add alpine-sdk
+}

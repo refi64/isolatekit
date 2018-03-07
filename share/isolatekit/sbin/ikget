@@ -1,0 +1,31 @@
+#!/run/isolatekit/data/bin/rc
+
+usage='Usage: ikget <url> [<output file>]'
+
+fn error {
+  echo $* >[1=2]
+  exit 1
+}
+
+switch ($#*) {
+case 0
+  error $usage
+case 1
+  if (~ $1 -h --help) {
+    echo $usage
+    exit
+  }
+  url=$1
+case 2
+  url=$1
+  output=$2
+}
+
+path=(`{dirname $0}^/../bin $path)
+flags=(-x16 --download-result=hide)
+
+if (~ $#output 0) {
+  aria2c $flags $url
+} else {
+  aria2c $flags -o $output $url
+}

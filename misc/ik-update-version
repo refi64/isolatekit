@@ -1,0 +1,11 @@
+#!/bin/sh
+
+date=`date -u +'%Y-%m-%dT%H:%M:%S'`
+
+if [ -n "$1" ]; then
+  for arg in "$@"; do
+    sed -i "s/^rel=.*/rel='$date'/" "$arg"
+  done
+else
+  echo "$date"
+fi

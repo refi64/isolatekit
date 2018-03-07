@@ -1,0 +1,39 @@
+#!/run/isolatekit/data/bin/rc
+
+usage='Usage: ikextract [-u] <filename> <output directory> [<patterns to extract>]'
+
+fn error {
+  echo $* >[1=2]
+  exit 1
+}
+
+if (~ $1 -u) {
+  unnest=1
+  shift
+}
+
+if (~ $#* [0-1]) {
+  error $usage
+}
+
+if (~ $1 -h --help) {
+  echo $usage
+  exit
+}
+
+file=$1
+out=$2
+shift 2
+
+for (pattern) {
+  args=($args --include=$pattern)
+}
+
+if (~ $unnest 1) {
+  args=($args -s '|^.*/||')
+}
+
+path=(`{dirname $0}^/../bin $path)  #`
+
+echo Extracting $file...
+pv $file | bsdtar -C $out -xf - $args

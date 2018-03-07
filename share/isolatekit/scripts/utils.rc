@@ -1,0 +1,8 @@
+fn : {}
+
+fn _vtest { whatis -$1 $2 >[1=] >[2=] }
+
+fn ikerror {
+  echo $*
+  exit 1
+}

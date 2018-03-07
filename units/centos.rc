@@ -1,0 +1,18 @@
+name=centos
+type=base
+props=(version)
+rel='2018-03-07T01:35:27'
+
+prop_version=7
+
+fn create {
+  url=https://github.com/CentOS/sig-cloud-instance-images/raw/CentOS-$prop_version/docker/centos-$prop_version-docker.tar.xz
+  ikget $url centos.txz
+
+  ikextract -u centos.txz $target
+}
+
+fn setup {
+  /usr/bin/yum update -y
+  echo 'exec /bin/bash' > /.isolatekit-enter
+}

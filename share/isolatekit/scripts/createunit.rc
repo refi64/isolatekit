@@ -1,0 +1,13 @@
+. `{dirname $0}^/utils.rc  #`
+
+. $1
+target=$2
+shift 2
+
+while (! ~ $#* 0) {
+  prop_$1=$2
+  shift 2
+}
+
+_ret=0
+path=($path /run/isolatekit/data/sbin) create
