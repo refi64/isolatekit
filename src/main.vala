@@ -681,6 +681,7 @@ struct Target {
 
     var kf = new KeyFile();
     try {
+      kf.set_string("Target", "Name", name);
       kf.set_string_list("Target", "Units", unit_strings);
       kf.save_to_file(config.get_path());
     } catch (Error e) {
@@ -801,6 +802,109 @@ class UpdateCommand : Command {
   }
 }
 
+class ListCommand : Command {
+  public override string name {
+    get { return ""; }
+  }
+  public override string usage {
+    get { return "all|targets|units"; }
+  }
+  public override string description {
+    get { return "List all targets and/or units."; }
+  }
+
+  private static bool arg_terse;
+
+  public const OptionEntry[] options = {
+    {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "terse", null},
+  };
+
+  private File[] listdir(File path) {
+    FileEnumerator enumerator = null;
+    File[] files = {};
+
+    try {
+      enumerator = path.enumerate_children("standard::*",
+                                           FileQueryInfoFlags.NOFOLLOW_SYMLINKS);
+    } catch (Error e) {
+      warn("Failed to list %s: %s", path.get_path(), e.message);
+      return files;
+    }
+
+    while (true) {
+      FileInfo info = null;
+
+      try {
+        info = enumerator.next_file();
+      } catch (Error e) {
+        warn("Failed to enumerate next file inside %s: %s", path.get_path(), e.message);
+        break;
+      }
+
+      if (info == null) {
+        break;
+      }
+
+      if (info.get_file_type() == FileType.DIRECTORY) {
+        files += path.get_child(info.get_name());
+      } else {
+        warn("Non-directory %s inside %s.", info.get_name(), path.get_path());
+      }
+    }
+
+    return files;
+  }
+
+  public override void run(string[] args) {
+    if (args.length != 1) {
+      fail("Expected 1 argument, got %d.", args.length);
+    } else if (args[0] != "all" && args[0] != "targets" && args[0] != "units") {
+      fail("Expected 'all', 'targets', or 'units', got '%s'.", args[0]);
+    }
+
+    string[] dirs = {};
+    if (args[0] == "all" || args[0] == "targets") {
+      dirs += "target";
+    }
+    if (args[0] == "all" || args[0] == "units") {
+      dirs += "unit";
+    }
+
+    foreach (var dir in dirs) {
+      var items = new ArrayList<string>();
+      var sect = dir == "target" ? "Target" : "Unit";
+
+      foreach (var path in listdir(SystemProvider.get_storage_dir().get_child(dir))) {
+        var config = path.get_child("config");
+
+        var kf = new KeyFile();
+        try {
+          kf.load_from_file(config.get_path(), KeyFileFlags.NONE);
+
+          items.add(kf.get_string(sect, "Name"));
+        } catch (Error e) {
+          warn("Failed to retrieve name from %s: %s", path.get_path(), e.message);
+        }
+      }
+
+      if (!arg_terse) {
+        println("![yellow]%ss:", sect);
+        foreach (var item in items) {
+          println("  - %s", item);
+        }
+      } else {
+        foreach (var item in items) {
+          if (args[0] == "all") {
+            println("%s: %s", dir, item);
+          } else {
+            println("%s", item);
+          }
+        }
+      }
+    }
+  }
+}
+
 class Main : Object {
   private static bool arg_help;
 
@@ -836,7 +940,8 @@ class Main : Object {
       println("![cyan]Commands:");
       blankln();
 
-      Command[] commands = {new TargetCommand(), new UpdateCommand()};
+      Command[] commands = {new TargetCommand(), new UpdateCommand(),
+                            new ListCommand()};
       foreach (var cmd in commands) {
         println("![yellow]  %-8s![/]%s", cmd.name, cmd.description);
       }
@@ -882,6 +987,10 @@ class Main : Object {
       case "update":
         command = new UpdateCommand();
         append_options((OptionEntry[])UpdateCommand.options);
+        break;
+      case "list":
+        command = new ListCommand();
+        append_options((OptionEntry[])ListCommand.options);
         break;
       }
     }
