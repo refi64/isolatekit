@@ -482,18 +482,70 @@ Unit[] read_units(UnitPath[] unit_paths, bool require_base = true,
   return units;
 }
 
-void run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_command,
-                 File? script = null)
+struct BindMount {
+  bool rw;
+  string source;
+  string dest;
+
+  public static BindMount[] parse(string binds_string, bool rw) {
+    BindMount[] binds = {};
+
+    var builder = new StringBuilder();
+    var escape = false;
+    string source = null;
+    string dest = null;
+
+    var index = 0;
+    unichar c = 0;
+    while (binds_string.get_next_char(ref index, out c)) {
+      if (escape) {
+        builder.append_unichar(c);
+        escape = false;
+      } else if (c == '\\') {
+        escape = true;
+      } else if (c == ':') {
+        if (source != null) {
+          fail("Bind mount %s should only have one : (use \\: to escape).",
+               binds_string);
+        }
+        source = builder.str;
+        builder.truncate();
+      } else if (c == ',') {
+        dest = builder.str;
+        builder.truncate();
+
+        binds += BindMount() {
+          rw = rw,
+          source = source ?? dest,
+          dest = dest
+        };
+        source = dest = null;
+      } else {
+        builder.append_unichar(c);
+      }
+    }
+
+    dest = builder.str;
+    if (dest.length != 0) {
+      binds += BindMount() {
+        rw = rw,
+        source = source ?? dest,
+        dest = dest
+      };
+    }
+
+    return binds;
+  }
+}
+
+int run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_command,
+                BindMount[] binds = {})
     requires (storage_base_ != null || layers.length != 0) {
   var storage_base = storage_base_ ??
                       SystemProvider.get_temporary_dir(@"$name-null-storage");
 
   var rootdir = storage_base.get_child("root");
   SystemProvider.mkdir_p(rootdir);
-
-  if (script != null) {
-    SystemProvider.bindmount(script.get_path(), "/run/isolatekit/script");
-  }
 
   File mountroot = null;
 
@@ -533,6 +585,14 @@ void run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_c
                              "-D", mountroot.get_path(), "--chdir=/", "-q",
                              "-M", name.replace("/", "_"), "-u", "0"};
 
+  foreach (var bind in binds) {
+    var arg = bind.rw ? "" : "-ro";
+    var source = File.new_for_path(bind.source.replace(":", "\\:"))
+                     .resolve_relative_path("").get_path();
+    var dest = bind.dest.replace(":", "\\:");
+    command += @"--bind$arg=$source:$dest";
+  }
+
   foreach (var item in run_command) {
     command += item;
   }
@@ -546,17 +606,7 @@ void run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_c
     fail("Spawning %s for %s failed: %s", join(run_command, " "), name, e.message);
   }
 
-  if (status != 0) {
-    if (script == null) {
-      Process.exit(Process.exit_status(status));
-    } else {
-      fail("%s of %s failed.", join(run_command, " "), name);
-    }
-  }
-
-  if (script != null) {
-    SystemProvider.umount("/run/isolatekit/script");
-  }
+  return Process.exit_status(status);
 }
 
 void ensure_units(Unit[] units) {
@@ -656,7 +706,13 @@ void ensure_units(Unit[] units) {
       run_command += entry.value;
     }
 
-    run_in_unit(unit.name, unit.storage.base, layers, run_command, unit.script);
+    SystemProvider.bindmount(unit.script.get_path(), "/run/isolatekit/script");
+    var ret = run_in_unit(unit.name, unit.storage.base, layers, run_command);
+    SystemProvider.umount("/run/isolatekit/script");
+
+    if (ret != 0) {
+      fail("Unit script failed with exit status %d.", ret);
+    }
 
     string[] dep_strings = {};
     foreach (var dep in unit.deps) {
@@ -763,11 +819,17 @@ class TargetCommand : Command {
 
   private static string arg_add;
   private static string arg_remove;
+  private static string arg_bind_ro = null;
+  private static string arg_bind_rw = null;
 
   public const OptionEntry[] options = {
     {"add", 'a', 0, OptionArg.STRING, ref arg_add, "Add units to this target", "UNITS"},
     {"remove", 'r', 0, OptionArg.STRING, ref arg_remove,
      "Remove units from this target", "UNITS"},
+    {"bind-ro", 'b', 0, OptionArg.STRING, ref arg_bind_ro,
+     "Bind mount the given directory in the running isolate (read-only).", "BIND"},
+    {"bind-rw", 'B', 0, OptionArg.STRING, ref arg_bind_rw,
+     "Bind mount the given directory in the running isolate (read-write).", "BIND"},
   };
 
   public override void run(string[] args) {
@@ -791,6 +853,18 @@ class TargetCommand : Command {
       if (target == null && !target_present) {
         fail("Cannot run a non-existent target.");
       }
+    }
+
+    if (args[0] == "set" && (arg_bind_ro != null || arg_bind_rw != null)) {
+      fail("-b/--bind-ro or -B/--bind-rw can only be passed to 'run'.");
+    }
+
+    BindMount[] binds = {};
+    foreach (var bind in BindMount.parse(arg_bind_rw ?? "", true)) {
+      binds += bind;
+    }
+    foreach (var bind in BindMount.parse(arg_bind_ro ?? "", false)) {
+      binds += bind;
     }
 
     var add_units = read_units(UnitPath.parse_paths(arg_add ?? ""), !target_present);
@@ -829,7 +903,7 @@ class TargetCommand : Command {
     } else if (args[0] == "run") {
       string[] command = {"/run/isolatekit/data/bin/rc", "-l", "/.isolatekit-enter"};
       var storage_base = target != null ? target.base : null;
-      run_in_unit("null", storage_base, units, command);
+      Process.exit(run_in_unit("null", storage_base, units, command, binds));
     }
   }
 }
