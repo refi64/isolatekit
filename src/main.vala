@@ -330,6 +330,7 @@ struct Unit {
   string name;
   UnitType type;
   string rel;
+  bool dirty;
   Unit[] deps;
   string[] expected_props;
   HashMap<string, string> given_props;
@@ -388,6 +389,7 @@ Unit[] read_units(UnitPath[] unit_paths, bool require_base = true,
         name = name,
         type = type,
         rel = kf.get_string("Result", "Rel"),
+        dirty = false,
         deps = deps,
         expected_props = kf.get_string_list("Result", "Props"),
         given_props = unit_path.props,
@@ -524,27 +526,41 @@ void ensure_units(Unit[] units) {
   var createunit = SystemProvider.get_script("createunit");
   var rc = SystemProvider.get_rc();
 
-  foreach (var unit in units) {
-    print("Processing unit ![cyan]%s![/]... ", unit.name);
+  var dirty = new HashSet<string>();
 
+  foreach (var unit in units) {
     if (unit.storage.base.query_exists()) {
       if (unit.storage.config.query_exists()) {
         try {
           var kf = new KeyFile();
           kf.load_from_file(unit.storage.config.get_path(), KeyFileFlags.NONE);
-          if (kf.get_string("Unit", "Rel") == unit.rel) {
-            println("already exists");
-            continue;
+          if (kf.get_string("Unit", "Rel") != unit.rel) {
+            unit.dirty = true;
           }
         } catch (Error e) {
           warn("Error reading %s storage config: %s", unit.name, e.message);
         }
       }
 
+      if (!unit.dirty) {
+        foreach (var dep in unit.deps) {
+          if (dep.storage.id in dirty) {
+            unit.dirty = true;
+            break;
+          }
+        }
+      }
+
+      if (!unit.dirty) {
+        continue;
+      } else {
+        dirty.add(unit.storage.id);
+      }
+
       SystemProvider.recursive_remove(unit.storage.base);
     }
 
-    blankln();
+    println("Downloading unit ![cyan]%s![/]... ", unit.name);
 
     SystemProvider.mkdir_p(unit.storage.root);
 
