@@ -778,6 +778,7 @@ class TargetCommand : Command {
     }
 
     Target? target = null;
+    bool target_present = false;
 
     if (args[1] == "null") {
       if (args[0] == "set") {
@@ -786,14 +787,13 @@ class TargetCommand : Command {
         fail("Cannot run a null target without -a/--add.");
       }
     } else {
-      bool present;
-      target = Target.read(args[1], out present);
-      if (target == null && !present) {
+      target = Target.read(args[1], out target_present);
+      if (target == null && !target_present) {
         fail("Cannot run a non-existent target.");
       }
     }
 
-    var add_units = read_units(UnitPath.parse_paths(arg_add ?? ""), target == null);
+    var add_units = read_units(UnitPath.parse_paths(arg_add ?? ""), !target_present);
     var remove_units = read_units(UnitPath.parse_paths(arg_remove ?? ""), false);
 
     Unit[] units = {};
