@@ -1102,6 +1102,8 @@ class Main : Object {
 
     SystemProvider.mount("none", "/", "",
                          Linux.MountFlags.PRIVATE | Linux.MountFlags.REC, "");
+    SystemProvider.mkdir_p(File.new_for_path("/run/isolatekit/tmp"));
+    SystemProvider.mkdir_p(File.new_for_path("/run/isolatekit/data"));
     SystemProvider.mount("tmpfs", "/run/isolatekit/tmp", "tmpfs", 0, "");
     SystemProvider.bindmount(SystemProvider.get_data_dir().get_path(),
                              "/run/isolatekit/data");
