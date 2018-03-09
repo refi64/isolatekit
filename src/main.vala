@@ -1028,9 +1028,10 @@ class TargetCommand : Command {
   private static string arg_bind_rw = null;
 
   public const OptionEntry[] options = {
-    {"add", 'a', 0, OptionArg.STRING, ref arg_add, "Add units to this target", "UNITS"},
+    {"add", 'a', 0, OptionArg.STRING, ref arg_add, "Add units to this target.",
+     "UNITS"},
     {"remove", 'r', 0, OptionArg.STRING, ref arg_remove,
-     "Remove units from this target", "UNITS"},
+     "Remove units from this target.", "UNITS"},
     {"bind-ro", 'b', 0, OptionArg.STRING, ref arg_bind_ro,
      "Bind mount the given directory in the running isolate (read-only).", "BIND"},
     {"bind-rw", 'B', 0, OptionArg.STRING, ref arg_bind_rw,
@@ -1182,7 +1183,7 @@ class ListCommand : Command {
   private static bool arg_terse;
 
   public const OptionEntry[] options = {
-    {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "Show terse output", null},
+    {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "Show terse output.", null},
   };
 
   public override void run(string[] args) {
@@ -1243,7 +1244,7 @@ class InfoCommand : Command {
   private static bool arg_terse;
 
   public const OptionEntry[] options = {
-    {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "Show terse output", null},
+    {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "Show terse output.", null},
   };
 
   public override void run(string[] args) {

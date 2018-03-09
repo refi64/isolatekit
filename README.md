@@ -47,7 +47,7 @@ it had a lot of problems:
 - Lightweight. GLib is the only runtime dependency, and Vala is the only built-time
   dependency.
 - Built on top of systemd-nspawn.
-- Designed to make generate environments from source scripts insanely easy. IsolateKit
+- Designed to make generating environments from source scripts insanely easy. IsolateKit
   in its current state isn't really designed around using binary images.
 
 ## Terminology
