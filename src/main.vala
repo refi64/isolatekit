@@ -918,6 +918,7 @@ void ensure_units(Unit[] units) {
 
 struct Target {
   string name;
+  string id;
   Unit[] units;
   File base;
   File config;
@@ -947,6 +948,7 @@ struct Target {
 
     return Target() {
       name = name,
+      id = id,
       units = read_units_from_ids(unit_ids),
       base = storage,
       config = config,
@@ -1124,8 +1126,7 @@ class UpdateCommand : Command {
     get { return "Update units."; }
   }
 
-  public const OptionEntry[] options = {
-  };
+  public const OptionEntry[] options = {};
 
   public override void run(string[] args) {
     var update_all = args.length == 0;
@@ -1228,6 +1229,136 @@ class ListCommand : Command {
   }
 }
 
+class InfoCommand : Command {
+  public override string name {
+    get { return "info"; }
+  }
+  public override string usage {
+    get { return "target|unit ![yellow]<item>![/]"; }
+  }
+  public override string description {
+    get { return "Get information about targets or units."; }
+  }
+
+  private static bool arg_terse;
+
+  public const OptionEntry[] options = {
+    {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "Show terse output", null},
+  };
+
+  public override void run(string[] args) {
+    if (args.length != 2) {
+      fail("Expected 2 arguments, got %d.", args.length);
+    } else if (args[0] != "target" && args[0] != "unit") {
+      fail("Expected 'target' or 'unit', got %s.", args[0]);
+    }
+
+    var dirname = args[0];
+    map_storage(dirname, (name, path, _) => {
+      if (name != args[1]) {
+        return;
+      }
+
+      if (dirname == "target") {
+        bool present;
+        var target = Target.read(name, out present);
+        assert(present);
+
+        if (arg_terse) {
+          println("name: %s", name);
+          println("id: %s", target.id);
+          print("units:");
+          foreach (var unit in target.units) {
+            print(" %s", unit.name);
+          }
+          blankln();
+        } else {
+          println("![yellow]Name:![/] %s", name);
+          println("![yellow]Id:![/] %s", target.id);
+          println("![yellow]Units:![/]");
+          foreach (var unit in target.units) {
+            println("  · ![cyan]%s![/]", unit.name);
+          }
+        }
+      } else if (dirname == "unit") {
+        string[] unit_ids = {path.get_basename()};
+        var unit = read_units_from_ids(unit_ids)[0];
+        var type = unit.type == UnitType.BASE ? "base" : "builder";
+
+        if (arg_terse) {
+          println("name: %s", name);
+          println("id: %s", unit.storage.id);
+          println("type: %s", type);
+          println("rel: %s", unit.rel);
+          println("path: %s", unit.path);
+
+          if (unit.deps.length > 0) {
+            print("deps:");
+            foreach (var dep in unit.deps) {
+              print(" %s", dep.name);
+            }
+            blankln();
+          }
+
+          if (unit.expected_props.length > 0) {
+            print("properties:");
+            foreach (var prop in unit.expected_props) {
+              print(" %s", prop);
+            }
+            blankln();
+          }
+
+          if (unit.given_props.size > 0) {
+            foreach (var entry in unit.given_props.entries) {
+              println("property %s: %s", entry.key, entry.value);
+            }
+          }
+        } else {
+          var time = Time.gm(0);
+          time.strptime(unit.rel, "%Y-%m-%dT%H:%M:%S");
+          var dt = new DateTime.utc(time.year + 1900, time.month, time.day, time.hour,
+                                    time.minute, time.second);
+
+          var fmt = "%B %d, %Y %H:%M:%S";
+          var rel_utc = dt.format(fmt);
+          var rel_local = dt.to_local().format(fmt);
+          var rel_tz_name = dt.to_local().format("%Z");
+          var rel_tz_offset = dt.to_local().format("%z");
+
+          println("![yellow]Name:![/] %s", name);
+          println("![yellow]Id:![/] %s", unit.storage.id);
+          println("![yellow]Type:![/] %s", type);
+          println("![yellow]Release: ![/]![cyan]UTC![/] %s +0000 / ![cyan]%s![/] %s %s",
+                  rel_utc, rel_tz_name, rel_local, rel_tz_offset);
+          println("![yellow]Unit path:![/] %s", unit.path);
+
+          if (unit.deps.length > 0) {
+            println("![yellow]Dependencies:![/]");
+            foreach (var dep in unit.deps) {
+              println("  · ![cyan]%s![/]", dep.name);
+            }
+          }
+
+          if (unit.expected_props.length > 0) {
+            println("![yellow]Properties:![/]");
+            foreach (var prop in unit.expected_props) {
+              print("  · ![cyan]%s![/]", prop);
+              if (unit.given_props.has_key(prop)) {
+                print("![cyan]: ![/]%s", unit.given_props[prop]);
+              }
+              blankln();
+            }
+          }
+        }
+      }
+
+      Process.exit(0);
+    });
+
+    fail("Failed to find %s with name %s.", args[0], args[1]);
+  }
+}
+
 class RemoveCommand : Command {
   public override string name {
     get { return "remove"; }
@@ -1305,7 +1436,7 @@ class Main : Object {
       blankln();
 
       Command[] commands = {new TargetCommand(), new UpdateCommand(),
-                            new ListCommand(), new RemoveCommand()};
+                            new ListCommand(), new InfoCommand(), new RemoveCommand()};
       foreach (var cmd in commands) {
         println("![yellow]  %-8s![/]%s", cmd.name, cmd.description);
       }
@@ -1360,6 +1491,10 @@ class Main : Object {
       case "list":
         command = new ListCommand();
         append_options((OptionEntry[])ListCommand.options);
+        break;
+      case "info":
+        command = new InfoCommand();
+        append_options((OptionEntry[])InfoCommand.options);
         break;
       case "remove":
         command = new RemoveCommand();
