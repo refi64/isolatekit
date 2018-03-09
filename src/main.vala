@@ -156,20 +156,18 @@ class FileUnitPath : UnitPath {
 }
 
 class SystemProvider {
-  private static File data_dir_cache = null;
+  private static File self_cache = null;
 
   public static File get_storage_dir() {
     return File.new_for_path("/var/lib/isolatekit");
   }
 
-  public static File get_data_dir() {
-    if (data_dir_cache == null) {
+  public static File get_self() {
+    if (self_cache == null) {
       try {
         var contents = FileUtils.read_link("/proc/self/exe");
         var utf8 = Filename.to_utf8(contents, -1, null, null);
-        data_dir_cache = File.new_for_path(utf8)
-                          .get_parent().get_parent()
-                          .get_child("share").get_child("isolatekit");
+        self_cache = File.new_for_path(utf8);
       } catch (FileError e) {
         fail("Failed to read /proc/self/exe: %s", e.message);
       } catch (ConvertError e) {
@@ -177,7 +175,12 @@ class SystemProvider {
       }
     }
 
-    return data_dir_cache;
+    return self_cache;
+  }
+
+  public static File get_data_dir() {
+    return get_self().get_parent().get_parent()
+                     .get_child("share").get_child("isolatekit");
   }
 
   public static File get_rc() {
@@ -1131,6 +1134,11 @@ class Main : Object {
   }
 
   public static int main(string[] args) {
+    string[] pkexec_args = {"pkexec", SystemProvider.get_self().get_path()};
+    foreach (var arg in args[1:args.length]) {
+      pkexec_args += arg;
+    }
+
     append_options((OptionEntry[])common_options);
 
     Command? command = null;
@@ -1175,6 +1183,11 @@ class Main : Object {
 
     if (command == null) {
       fail("No command given.");
+    }
+
+    if (Posix.access("/", Posix.W_OK) == -1) {
+      Posix.execvp("pkexec", pkexec_args);
+      fail("pkexec execvp failed: %s", strerror(errno));
     }
 
     if (Linux.unshare(Linux.CloneFlags.NEWNS) == -1) {
