@@ -943,7 +943,7 @@ class ListCommand : Command {
   private static bool arg_terse;
 
   public const OptionEntry[] options = {
-    {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "terse", null},
+    {"terse", 't', 0, OptionArg.NONE, ref arg_terse, "Show terse output", null},
   };
 
   public override void run(string[] args) {
@@ -966,6 +966,10 @@ class ListCommand : Command {
       var sect = dirname == "target" ? "Target" : "Unit";
 
       var dir = SystemProvider.get_storage_dir().get_child(dirname);
+      if (!dir.query_exists()) {
+        continue;
+      }
+
       foreach (var path in SystemProvider.list(dir, FileType.DIRECTORY)) {
         var config = path.get_child("config");
 
@@ -979,6 +983,9 @@ class ListCommand : Command {
         }
       }
 
+      if (items.size == 0) {
+        continue;
+      }
       items.sort();
 
       if (!arg_terse) {
@@ -1112,7 +1119,7 @@ class Main : Object {
         continue;
       }
 
-      println("  ![green]-%c --%-7s![/]%s", opt.short_name, opt.long_name,
+      println("  ![green]-%c --%-9s![/]%s", opt.short_name, opt.long_name,
               opt.description);
     }
   }
