@@ -1118,7 +1118,7 @@ class UpdateCommand : Command {
     get { return "update"; }
   }
   public override string usage {
-    get { return "update ![yellow]<units...>![/]"; }
+    get { return "![yellow]<units...>![/]"; }
   }
   public override string description {
     get { return "Update units."; }
@@ -1233,7 +1233,7 @@ class RemoveCommand : Command {
     get { return "remove"; }
   }
   public override string usage {
-    get { return "targets|units"; }
+    get { return "targets|units ![yellow]<items...>![/]"; }
   }
   public override string description {
     get { return "Remove targets or units."; }
