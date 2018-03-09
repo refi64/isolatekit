@@ -70,6 +70,7 @@ void warn(string message, ...) {
   blankln();
 }
 
+[NoReturn]
 void fail(string message, ...) {
   var args = va_list();
   vprint(@"![bold]![red]Error: ![reset]$message", args);
@@ -151,15 +152,15 @@ abstract class UnitPath {
       }
       return new GitUnitPath(props, path, url, file);
     }
+
     fail("Invalid unit path: %s", path);
-    return (UnitPath)null;
   }
 
-  protected abstract File internal_retrieve(bool use_cached);
+  protected abstract File internal_retrieve(bool update);
 
-  public File retrieve(bool use_cached = false) {
-    if (retrieve_cache == null || !use_cached) {
-      retrieve_cache = internal_retrieve(use_cached);
+  public File retrieve(bool update = false) {
+    if (retrieve_cache == null || !update) {
+      retrieve_cache = internal_retrieve(update);
     }
     return retrieve_cache;
   }
@@ -174,7 +175,7 @@ class FileUnitPath : UnitPath {
     this.file = File.new_for_path(file);
   }
 
-  protected override File internal_retrieve(bool use_cached) {
+  protected override File internal_retrieve(bool update) {
     if (!file.query_exists()) {
       fail("Unit file %s does not exist.", file.get_path());
     }
@@ -195,7 +196,7 @@ class GitUnitPath : UnitPath {
     this.file = file;
   }
 
-  protected override File internal_retrieve(bool use_cached) {
+  protected override File internal_retrieve(bool update) {
     var repo_storage = SystemProvider.get_storage_dir().get_child("repo");
     var id = sha256(url);
     var repo = repo_storage.get_child(id);
@@ -227,6 +228,21 @@ class GitUnitPath : UnitPath {
         os.close();
       } catch (Error e) {
         fail("Failed to write test file %s: %s", test.get_path(), e.message);
+      }
+    } else if (update) {
+      println("Running ![cyan]git pull![/] for ![yellow]%s![/]...", url);
+
+      int status;
+      try {
+        string[] command = {"git", "pull"};
+        Process.spawn_sync(repo.get_path(), command, Environ.get(),
+                           SpawnFlags.SEARCH_PATH, null, null, null, out status);
+      } catch (SpawnError e) {
+        fail("Failed to spawn git: %s", e.message);
+      }
+
+      if (status != 0) {
+        fail("git failed with exit status %d.", status);
       }
     }
 
@@ -289,7 +305,6 @@ class SystemProvider {
       return File.new_for_path(DirUtils.make_tmp(@"XXXXXX$suffix"));
     } catch (FileError e) {
       fail("Failed to get temporary directory: %s", e.message);
-      return (File)null;
     }
   }
 
@@ -302,7 +317,6 @@ class SystemProvider {
       return tmp;
     } catch (Error e) {
       fail("Failed to get temporary file: %s", e.message);
-      return (File)null;
     }
   }
 
@@ -469,9 +483,11 @@ struct Unit {
 
 Unit[] read_units_from_paths(UnitPath[] unit_paths, bool require_base = true,
                              Unit[]? units_ = null,
-                             HashMap<string, int>? index_map_ = null) {
+                             HashMap<string, int>? name_index_map_ = null,
+                             HashMap<string, int>? path_index_map_ = null) {
   var units = units_ ?? new Unit[]{};
-  var index_map = index_map_ ?? new HashMap<string, int>();
+  var name_index_map = name_index_map_ ?? new HashMap<string, int>();
+  var path_index_map = path_index_map_ ?? new HashMap<string, int>();
 
   var rc = SystemProvider.get_rc();
   var queryunit = SystemProvider.get_script("queryunit");
@@ -495,59 +511,67 @@ Unit[] read_units_from_paths(UnitPath[] unit_paths, bool require_base = true,
       fail("queryunit of %s failed.", unit_path.path);
     }
 
-    var kf = new KeyFile();
-    try {
-      kf.load_from_file(temp.get_path(), KeyFileFlags.NONE);
+    Unit unit;
 
-      if (kf.has_group("Error")) {
-        fail("%s: %s", unit_path.path, kf.get_string("Error", "Message"));
-      }
+    if (path_index_map.has_key(unit_script.get_path())) {
+      unit = units[path_index_map[unit_script.get_path()]];
+    } {
+      var kf = new KeyFile();
+      try {
+        kf.load_from_file(temp.get_path(), KeyFileFlags.NONE);
 
-      string name = kf.get_string("Result", "Name");
-      UnitType type = kf.get_string("Result", "Type") == "base" ? UnitType.BASE :
-                      UnitType.BUILDER;
-      UnitPath[] dep_paths = {};
-      foreach (var dep_string in kf.get_string_list("Result", "Deps")) {
-        dep_paths += UnitPath.parse(dep_string,
-                                    unit_path.retrieve().get_parent().get_path());
-      }
-
-      var deps = read_units_from_paths(dep_paths, true, units, index_map);
-
-      var unit = Unit() {
-        name = name,
-        type = type,
-        rel = kf.get_string("Result", "Rel"),
-        dirty = false,
-        deps = deps,
-        expected_props = kf.get_string_list("Result", "Props"),
-        given_props = unit_path.props,
-        path = unit_path.path,
-        script = unit_script,
-        storage = UnitStorageData.new_for_unit_name(name, unit_path.props)
-      };
-
-      if (index_map.has_key(unit.name)) {
-        var other_unit = units[index_map[unit.name]];
-        if (unit.type != other_unit.type || unit.rel != other_unit.rel) {
-          fail("Unit %s is self-inconsistent.", unit.name);
+        if (kf.has_group("Error")) {
+          fail("%s: %s", unit_path.path, kf.get_string("Error", "Message"));
         }
 
-        foreach (var entry in unit.given_props.entries) {
-          if (other_unit.given_props.has_key(entry.key)) {
-            warn("Unit %s has inconsistent props between two instances: %s={%s,%s}",
-                 unit.name, entry.key, other_unit.given_props[entry.key], entry.value);
-          } else {
-            other_unit.given_props[entry.key] = entry.value;
-          }
+        string name = kf.get_string("Result", "Name");
+        UnitType type = kf.get_string("Result", "Type") == "base" ? UnitType.BASE :
+                        UnitType.BUILDER;
+        UnitPath[] dep_paths = {};
+        foreach (var dep_string in kf.get_string_list("Result", "Deps")) {
+          dep_paths += UnitPath.parse(dep_string,
+                                      unit_path.retrieve().get_parent().get_path());
         }
-      } else {
-        index_map[unit.name] = units.length;
-        units += unit;
+
+        var deps = read_units_from_paths(dep_paths, true, units, name_index_map,
+                                         path_index_map);
+
+        unit = Unit() {
+          name = name,
+          type = type,
+          rel = kf.get_string("Result", "Rel"),
+          dirty = false,
+          deps = deps,
+          expected_props = kf.get_string_list("Result", "Props"),
+          given_props = unit_path.props,
+          path = unit_path.path,
+          script = unit_script,
+          storage = UnitStorageData.new_for_unit_name(name, unit_path.props)
+        };
+      } catch (Error e) {
+        fail("Failed to load key-value queryunit data for %s from %s: %s",
+             unit_path.path, temp.get_path(), e.message);
       }
-    } catch (Error e) {
-      fail("Failed to load key-value queryunit data for %s from %s: %s",
-           unit_path.path, temp.get_path(), e.message);
+    }
+
+    if (name_index_map.has_key(unit.name)) {
+      var other_unit = units[name_index_map[unit.name]];
+      if (unit.type != other_unit.type || unit.rel != other_unit.rel) {
+        fail("Unit %s is self-inconsistent.", unit.name);
+      }
+
+      foreach (var entry in unit.given_props.entries) {
+        if (other_unit.given_props.has_key(entry.key)) {
+          warn("Unit %s has inconsistent props between two instances: %s={%s,%s}",
+               unit.name, entry.key, other_unit.given_props[entry.key], entry.value);
+        } else {
+          other_unit.given_props[entry.key] = entry.value;
+        }
+      }
+    } else {
+      name_index_map[unit.name] = units.length;
+      path_index_map[unit_script.get_path()] = units.length;
+      units += unit;
     }
   }
 
@@ -777,6 +801,8 @@ void ensure_units(Unit[] units) {
         } catch (Error e) {
           warn("Error reading %s storage config: %s", unit.name, e.message);
         }
+      } else {
+        unit.dirty = true;
       }
 
       if (!unit.dirty) {
@@ -947,7 +973,7 @@ struct Target {
   }
 }
 
-delegate void StorageMapDelegate(string name, File path);
+delegate void StorageMapDelegate(string name, File path, KeyFile kf);
 
 string map_storage(string dirname, StorageMapDelegate dl) {
   var sect = dirname == "target" ? "Target" : "Unit";
@@ -970,7 +996,7 @@ string map_storage(string dirname, StorageMapDelegate dl) {
       continue;
     }
 
-    dl(name, path);
+    dl(name, path, kf);
   }
 
   return sect;
@@ -1092,19 +1118,52 @@ class UpdateCommand : Command {
     get { return "update"; }
   }
   public override string usage {
-    get { return "update"; }
+    get { return "update ![yellow]<units...>![/]"; }
   }
   public override string description {
-    get { return "Update units or targets."; }
+    get { return "Update units."; }
   }
 
-  private static string arg_add;
-
   public const OptionEntry[] options = {
-    {"add", 'a', 0, OptionArg.STRING, ref arg_add, "add", "UNITS"},
   };
 
   public override void run(string[] args) {
+    var update_all = args.length == 0;
+    var to_update = new HashSet<string>();
+    foreach (var arg in args) {
+      to_update.add(arg);
+    }
+
+    var passed = new HashSet<string>();
+    UnitPath[] paths = {};
+
+    map_storage("unit", (name, _, kf) => {
+      UnitPath path;
+
+      if (!update_all && !(name in to_update)) {
+        return;
+      }
+
+      try {
+        path = UnitPath.parse(kf.get_string("Unit", "Path"));
+      } catch (KeyFileError e) {
+        fail("Failed to retrieve unit data for %s: %s", name, e.message);
+      }
+
+      path.retrieve(true);
+      paths += path;
+    });
+
+    Unit[] units = {};
+
+    foreach (var unit in read_units_from_paths(paths)) {
+      if (!(unit.storage.id in passed)) {
+        units += unit;
+        passed.add(unit.storage.id);
+      }
+    }
+
+    ensure_units(units);
   }
 }
 
@@ -1142,7 +1201,7 @@ class ListCommand : Command {
 
     foreach (var dirname in dirs) {
       var items = new ArrayList<string>();
-      var sect = map_storage(dirname, (name, path) => {
+      var sect = map_storage(dirname, (name, path, kf) => {
         items.add(name);
       });
 
@@ -1196,7 +1255,7 @@ class RemoveCommand : Command {
       to_remove.add(arg);
     }
 
-    map_storage(dirname, (name, path) => {
+    map_storage(dirname, (name, path, kf) => {
       if (name in to_remove) {
         println("Removing ![cyan]%s![/]...", name);
         SystemProvider.recursive_remove(path);
