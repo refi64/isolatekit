@@ -1402,10 +1402,13 @@ class RemoveCommand : Command {
 }
 
 class Main : Object {
+  private static string arg_resolve;
   private static bool arg_help;
 
   const OptionEntry[] common_options = {
     {"help", 'h', 0, OptionArg.NONE, ref arg_help, "Show this screen.", null},
+    {"resolve", 'R', 0, OptionArg.STRING, ref arg_resolve,
+     "Resolve paths relative to the given directory.", "DIRECTORY"},
   };
 
   private static OptionEntry[] all_options = {};
@@ -1526,8 +1529,22 @@ class Main : Object {
     }
 
     if (Posix.access("/", Posix.W_OK) == -1) {
+      pkexec_args += "-R";
+      if (arg_resolve == null) {
+        pkexec_args += Environment.get_current_dir();
+      } else {
+        pkexec_args += File.new_for_path(arg_resolve).resolve_relative_path("")
+                           .get_path();
+      }
       Posix.execvp("pkexec", pkexec_args);
       fail("pkexec execvp failed: %s", strerror(errno));
+    }
+
+    if (arg_resolve != null) {
+      if (Posix.chdir(arg_resolve) == -1) {
+        fail("Failed to change to resolve directory %s: %s", arg_resolve,
+             strerror(errno));
+      }
     }
 
     if (Linux.unshare(Linux.CloneFlags.NEWNS) == -1) {
