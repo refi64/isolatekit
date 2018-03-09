@@ -77,6 +77,12 @@ void fail(string message, ...) {
   Process.exit(1);
 }
 
+string sha256(string s) {
+  var sha_builder = new Checksum(ChecksumType.SHA256);
+  sha_builder.update((uchar[])s, s.length);
+  return sha_builder.get_string();
+}
+
 abstract class UnitPath {
   public HashMap<string, string> props { get; protected set; }
   public string path { get; protected set; }
@@ -122,16 +128,38 @@ abstract class UnitPath {
         file_path = @"$relative_to/$file_path";
       }
       return new FileUnitPath(props, @"file:$file_path", file_path);
+    } else if (path.has_prefix("git:") || path.has_prefix("github:")) {
+      var colon = path.index_of_char(':');
+      var prefix = path[0:colon];
+      var url_and_file = path[colon + 1:path.length];
+
+      var slash = url_and_file.index_of("//");
+      if (slash == -1) {
+        fail("Unit path %s must use // to separate repository and file.", path);
+      }
+      var url = url_and_file[0:slash];
+      var file = url_and_file[slash + 2:url_and_file.length];
+
+      MatchInfo match;
+      var is_repo = /^([^\/]+)\/([^\/]+)$/.match(url, 0, out match);
+      if (prefix != "git" && !is_repo) {
+        fail("Invalid repo in unit path: %s", path);
+      }
+
+      if (is_repo) {
+        url = @"https://github.com/$url";
+      }
+      return new GitUnitPath(props, path, url, file);
     }
     fail("Invalid unit path: %s", path);
     return (UnitPath)null;
   }
 
-  protected abstract File internal_retrieve();
+  protected abstract File internal_retrieve(bool use_cached);
 
-  public File retrieve() {
-    if (retrieve_cache == null) {
-      retrieve_cache = internal_retrieve();
+  public File retrieve(bool use_cached = false) {
+    if (retrieve_cache == null || !use_cached) {
+      retrieve_cache = internal_retrieve(use_cached);
     }
     return retrieve_cache;
   }
@@ -146,12 +174,68 @@ class FileUnitPath : UnitPath {
     this.file = File.new_for_path(file);
   }
 
-  protected override File internal_retrieve() {
+  protected override File internal_retrieve(bool use_cached) {
     if (!file.query_exists()) {
       fail("Unit file %s does not exist.", file.get_path());
     }
 
     return file;
+  }
+}
+
+class GitUnitPath : UnitPath {
+  private string url;
+  private string file;
+
+  public GitUnitPath(HashMap<string, string> props, string path, string url,
+                     string file) {
+    this.props = props;
+    this.path = path;
+    this.url = url;
+    this.file = file;
+  }
+
+  protected override File internal_retrieve(bool use_cached) {
+    var repo_storage = SystemProvider.get_storage_dir().get_child("repo");
+    var id = sha256(url);
+    var repo = repo_storage.get_child(id);
+    var test = repo.get_child(".isolatekit-test");
+
+    if (!test.query_exists()) {
+      println("Running ![cyan]git clone![/] ![magenta]%s![/]...", url);
+
+      if (repo.query_exists()) {
+        SystemProvider.recursive_remove(repo);
+      }
+      SystemProvider.mkdir_p(repo);
+      int status;
+
+      try {
+        string[] command = {"git", "clone", url, repo.get_path()};
+        Process.spawn_sync(Environment.get_current_dir(), command, Environ.get(),
+                           SpawnFlags.SEARCH_PATH, null, null, null, out status);
+      } catch (SpawnError e) {
+        fail("Failed to spawn git: %s", e.message);
+      }
+
+      if (status != 0) {
+        fail("git failed with exit status %d.", status);
+      }
+
+      try {
+        var os = test.create(FileCreateFlags.PRIVATE);
+        os.close();
+      } catch (Error e) {
+        fail("Failed to write test file %s: %s", test.get_path(), e.message);
+      }
+    }
+
+    var child = File.new_for_path(@"$(repo.get_path())/$file");
+    if (!child.query_exists()) {
+      fail("Failed to locate unit %s inside %s.", file, url);
+    }
+
+    return child;
   }
 }
 
@@ -814,9 +898,7 @@ struct Target {
   File root;
 
   public static Target read(string name, out bool present) {
-    var sha_builder = new Checksum(ChecksumType.SHA256);
-    sha_builder.update((uchar[])name, name.length);
-    var id = sha_builder.get_string();
+    var id = sha256(name);
     var storage = SystemProvider.get_storage_dir().get_child("target").get_child(id);
 
     present = false;
