@@ -35,5 +35,5 @@ if touch "$PREFIX" >/dev/null 2>&1; then
     done
   done
 else
-  exec pkexec sh "`realpath "$0"`" "$out"
+  exec pkexec sh "`realpath "$0"`" "$PREFIX"
 fi
