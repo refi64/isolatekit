@@ -342,6 +342,18 @@ struct UnitStorageData {
   File config;
   File script;
 
+  public static UnitStorageData new_for_unit_id(string id) {
+    var storage = SystemProvider.get_storage_dir().get_child("unit").get_child(id);
+
+    return UnitStorageData() {
+      id = id,
+      base = storage,
+      root = storage.get_child("root"),
+      config = storage.get_child("config"),
+      script = storage.get_child("script.rc")
+    };
+  }
+
   public static UnitStorageData new_for_unit_name(string name,
                                                   HashMap<string, string> given_props) {
     var sha_builder = new Checksum(ChecksumType.SHA256);
@@ -354,15 +366,7 @@ struct UnitStorageData {
     }
 
     var id = sha_builder.get_string();
-    var storage = SystemProvider.get_storage_dir().get_child("unit").get_child(id);
-
-    return UnitStorageData() {
-      id = id,
-      base = storage,
-      root = storage.get_child("root"),
-      config = storage.get_child("config"),
-      script = storage.get_child("script.rc")
-    };
+    return new_for_unit_id(id);
   }
 }
 
@@ -379,8 +383,9 @@ struct Unit {
   UnitStorageData storage;
 }
 
-Unit[] read_units(UnitPath[] unit_paths, bool require_base = true,
-                  Unit[]? units_ = null, HashMap<string, int>? index_map_ = null) {
+Unit[] read_units_from_paths(UnitPath[] unit_paths, bool require_base = true,
+                             Unit[]? units_ = null,
+                             HashMap<string, int>? index_map_ = null) {
   var units = units_ ?? new Unit[]{};
   var index_map = index_map_ ?? new HashMap<string, int>();
 
@@ -423,7 +428,7 @@ Unit[] read_units(UnitPath[] unit_paths, bool require_base = true,
                                     unit_path.retrieve().get_parent().get_path());
       }
 
-      var deps = read_units(dep_paths, true, units, index_map);
+      var deps = read_units_from_paths(dep_paths, true, units, index_map);
 
       var unit = Unit() {
         name = name,
@@ -479,6 +484,64 @@ Unit[] read_units(UnitPath[] unit_paths, bool require_base = true,
           fail("%s must not be a base.", unit.name);
         }
       }
+    }
+  }
+
+  return units;
+}
+
+// NOTE: This does NOT resolve dependencies, and it assumes all deps are already in
+// the id list.
+Unit[] read_units_from_ids(string[] unit_ids) {
+  Unit[] units = {};
+  var index_map = new HashMap<string, int>();
+
+  foreach (var id in unit_ids) {
+    var storage = UnitStorageData.new_for_unit_id(id);
+    if (!storage.base.query_exists()) {
+      fail("Unit with id %s does not exist.", id);
+    }
+
+    var kf = new KeyFile();
+    try {
+      kf.load_from_file(storage.config.get_path(), KeyFileFlags.NONE);
+
+      var name = kf.get_string("Unit", "Name");
+      var type = kf.get_string("Unit", "Type") == "base" ? UnitType.BASE
+                 : UnitType.BUILDER;
+
+      Unit[] deps = {};
+      foreach (var dep_id in kf.get_string_list("Unit", "Deps")) {
+        if (!index_map.has_key(dep_id)) {
+          fail("Unit id %s should have come before %s (%s).", dep_id, id, name);
+        }
+        deps += units[index_map[dep_id]];
+      }
+
+      var given_props = new HashMap<string, string>();
+      if (kf.has_group("GivenProps")) {
+        foreach (var key in kf.get_keys("GivenProps")) {
+          given_props[key] = kf.get_string("GivenProps", key);
+        }
+      }
+
+      var unit = Unit() {
+        name = name,
+        type = type,
+        rel = kf.get_string("Unit", "Rel"),
+        dirty = false,
+        deps = deps,
+        expected_props = kf.get_string_list("Unit", "ExpectedProps"),
+        given_props = given_props,
+        path = kf.get_string("Unit", "Path"),
+        script = storage.script,
+        storage = storage
+      };
+
+      index_map[id] = units.length;
+      units += unit;
+    } catch (Error e) {
+      fail("Failed to load unit config for id %s: %s", id, e.message);
     }
   }
 
@@ -650,7 +713,7 @@ void ensure_units(Unit[] units) {
       SystemProvider.recursive_remove(unit.storage.base);
     }
 
-    println("Downloading unit ![cyan]%s![/]... ", unit.name);
+    println("Processing unit ![cyan]%s![/]... ", unit.name);
 
     SystemProvider.mkdir_p(unit.storage.root);
 
@@ -719,7 +782,7 @@ void ensure_units(Unit[] units) {
 
     string[] dep_strings = {};
     foreach (var dep in unit.deps) {
-      dep_strings += dep.path;
+      dep_strings += dep.storage.id;
     }
 
     var kf = new KeyFile();
@@ -731,7 +794,7 @@ void ensure_units(Unit[] units) {
     kf.set_string_list("Unit", "Deps", dep_strings);
 
     foreach (var entry in unit.given_props.entries) {
-     kf.set_string("GivenProps", entry.key, entry.value);
+      kf.set_string("GivenProps", entry.key, entry.value);
     }
 
     try {
@@ -758,15 +821,15 @@ struct Target {
 
     present = false;
 
-    UnitPath[] unit_paths = {};
+    string[] unit_ids = {};
 
     var config = storage.get_child("config");
     if (config.query_exists()) {
       var kf = new KeyFile();
       try {
         kf.load_from_file(config.get_path(), KeyFileFlags.NONE);
-        foreach (var unit_string in kf.get_string_list("Target", "Units")) {
-          unit_paths += UnitPath.parse(unit_string);
+        foreach (var unit_id in kf.get_string_list("Target", "Units")) {
+          unit_ids += unit_id;
         }
         present = true;
       } catch (Error e) {
@@ -776,7 +839,7 @@ struct Target {
 
     return Target() {
       name = name,
-      units = read_units(unit_paths),
+      units = read_units_from_ids(unit_ids),
       base = storage,
       config = config,
       root = storage.get_child("root")
@@ -786,15 +849,15 @@ struct Target {
   public void save() {
     SystemProvider.mkdir_p(root);
 
-    string[] unit_strings = {};
+    string[] unit_ids = {};
     foreach (var unit in units) {
-      unit_strings += unit.path;
+      unit_ids += unit.storage.id;
     }
 
     var kf = new KeyFile();
     try {
       kf.set_string("Target", "Name", name);
-      kf.set_string_list("Target", "Units", unit_strings);
+      kf.set_string_list("Target", "Units", unit_ids);
       kf.save_to_file(config.get_path());
     } catch (Error e) {
       fail("Failed to save target %s: %s", name, e.message);
@@ -853,7 +916,7 @@ class TargetCommand : Command {
       }
     } else {
       target = Target.read(args[1], out target_present);
-      if (!target_present) {
+      if (args[0] == "run" && !target_present) {
         fail("Cannot run a non-existent target.");
       }
     }
@@ -870,8 +933,10 @@ class TargetCommand : Command {
       binds += bind;
     }
 
-    var add_units = read_units(UnitPath.parse_paths(arg_add ?? ""), !target_present);
-    var remove_units = read_units(UnitPath.parse_paths(arg_remove ?? ""), false);
+    var add_units = read_units_from_paths(UnitPath.parse_paths(arg_add ?? ""),
+                                          !target_present);
+    var remove_units = read_units_from_paths(UnitPath.parse_paths(arg_remove ?? ""),
+                                             false);
 
     Unit[] units = {};
 
