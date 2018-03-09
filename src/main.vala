@@ -853,7 +853,7 @@ class TargetCommand : Command {
       }
     } else {
       target = Target.read(args[1], out target_present);
-      if (target == null && !target_present) {
+      if (!target_present) {
         fail("Cannot run a non-existent target.");
       }
     }
