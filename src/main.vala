@@ -865,6 +865,35 @@ struct Target {
   }
 }
 
+delegate void StorageMapDelegate(string name, File path);
+
+string map_storage(string dirname, StorageMapDelegate dl) {
+  var sect = dirname == "target" ? "Target" : "Unit";
+
+  var dir = SystemProvider.get_storage_dir().get_child(dirname);
+  if (!dir.query_exists()) {
+    return sect;
+  }
+
+  foreach (var path in SystemProvider.list(dir, FileType.DIRECTORY)) {
+    var config = path.get_child("config");
+
+    var kf = new KeyFile();
+    string name = null;
+    try {
+      kf.load_from_file(config.get_path(), KeyFileFlags.NONE);
+      name = kf.get_string(sect, "Name");
+    } catch (Error e) {
+      warn("Failed to load %s: %s", path.get_path(), e.message);
+      continue;
+    }
+
+    dl(name, path);
+  }
+
+  return sect;
+}
+
 abstract class Command {
   public abstract string name { get; }
   public abstract string usage { get; }
@@ -1031,25 +1060,9 @@ class ListCommand : Command {
 
     foreach (var dirname in dirs) {
       var items = new ArrayList<string>();
-      var sect = dirname == "target" ? "Target" : "Unit";
-
-      var dir = SystemProvider.get_storage_dir().get_child(dirname);
-      if (!dir.query_exists()) {
-        continue;
-      }
-
-      foreach (var path in SystemProvider.list(dir, FileType.DIRECTORY)) {
-        var config = path.get_child("config");
-
-        var kf = new KeyFile();
-        try {
-          kf.load_from_file(config.get_path(), KeyFileFlags.NONE);
-
-          items.add(kf.get_string(sect, "Name"));
-        } catch (Error e) {
-          warn("Failed to retrieve name from %s: %s", path.get_path(), e.message);
-        }
-      }
+      var sect = map_storage(dirname, (name, path) => {
+        items.add(name);
+      });
 
       if (items.size == 0) {
         continue;
@@ -1095,34 +1108,19 @@ class RemoveCommand : Command {
     }
 
     var dirname = args[0][0:args[0].length - 1];
-    var dir = SystemProvider.get_storage_dir().get_child(dirname);
-    var sect = dirname == "target" ? "Target" : "Unit";
 
     var to_remove = new HashSet<string>();
     foreach (var arg in args[1:args.length]) {
       to_remove.add(arg);
     }
 
-    foreach (var path in SystemProvider.list(dir, FileType.DIRECTORY)) {
-      // XXX: largely copied from ListCommand.
-      var config = path.get_child("config");
-      string name = "";
-
-      var kf = new KeyFile();
-      try {
-        kf.load_from_file(config.get_path(), KeyFileFlags.NONE);
-        name = kf.get_string(sect, "Name");
-      } catch (Error e) {
-        warn("Failed to retrieve name from %s: %s", path.get_path(), e.message);
-        continue;
-      }
-
+    map_storage(dirname, (name, path) => {
       if (name in to_remove) {
         println("Removing ![cyan]%s![/]...", name);
         SystemProvider.recursive_remove(path);
         to_remove.remove(name);
       }
-    }
+    });
 
     foreach (var name in to_remove) {
       warn("Failed to locate %s: %s", dirname, name);
