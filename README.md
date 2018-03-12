@@ -59,21 +59,16 @@ it had a lot of problems:
 - **Target:** A target tells IsolateKit how to run an isolate. It contains both a list
   of units to run and a working directory where changes should be placed.
 
-## Usage
+## Examples
 
-TODO
-
-```
-$ ik target set
-
-$ ik target run
-
-$ ik update
-
-$ ik list all
-$ ik list targets
-$ ik list units
-
-$ ik remove targets a b
-$ ik remove units d e f
+```bash
+# Create a new target that depends on the Alpine unit.
+$ ik target set test -a ik:alpine.rc
+# Run the new target.
+$ ik target run test
+# Run the new target, but also add the SDK unit.
+$ ik target run test -a ik:alpine/sdk.rc
+# Run the Alpine unit, but with no target.
+# This will discard any changes made (think docker run --rm).
+$ ik target run null -a ik:alpine.rc,alpine/sdk.rc
 ```

@@ -9,12 +9,12 @@ override VALAFLAGS += \
 	-X -D_GNU_SOURCE \
 	-g
 
+DESTDIR=
+PREFIX=/usr
+
 -include config.mk
 
 export CC
-
-DESTDIR=
-PREFIX=/usr
 
 .PHONY: all c install
 
