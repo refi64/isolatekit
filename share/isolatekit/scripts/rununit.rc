@@ -9,5 +9,6 @@ while (! ~ $#* 0) {
   shift 2
 }
 
+cd /tmp
 path=(/run/isolatekit/data/sbin $path) $_func
 exit

@@ -763,7 +763,7 @@ int run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_co
   var command = new string[]{"systemd-nspawn", "--register=no",
                              "--bind-ro=/run/isolatekit/data",
                              "--bind-ro=/run/isolatekit/script",
-                             "-D", mountroot.get_path(), "--chdir=/", "-q",
+                             "-D", mountroot.get_path(), "--chdir=/root", "-q",
                              "-M", name.replace("/", "_"), "-u", "0"};
 
   foreach (var bind in binds) {
