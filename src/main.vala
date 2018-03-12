@@ -151,6 +151,10 @@ abstract class UnitPath {
         url = @"https://github.com/$url";
       }
       return new GitUnitPath(props, path, url, file);
+    } else if (path.has_prefix("ik:")) {
+      var file_path = path[3:path.length];
+      return new GitUnitPath(props, path, "https://github.com/kirbyfan64/isolatekit",
+                             @"units/$file_path");
     }
 
     fail("Invalid unit path: %s", path);
