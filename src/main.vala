@@ -251,8 +251,11 @@ class GitUnitPath : UnitPath {
     }
 
     var child = File.new_for_path(@"$(repo.get_path())/$file");
-    if (!child.query_exists()) {
-      fail("Failed to locate unit %s inside %s.", file, url);
+    if (child.query_file_type(FileQueryInfoFlags.NONE) != FileType.REGULAR) {
+      child = File.new_for_path(@"$(child.get_path()).rc");
+      if (child.query_file_type(FileQueryInfoFlags.NONE) != FileType.REGULAR) {
+        fail("Failed to locate unit %s inside %s.", file, url);
+      }
     }
 
     return child;
