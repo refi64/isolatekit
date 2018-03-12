@@ -50,15 +50,6 @@ it had a lot of problems:
 - Designed to make generating environments from source scripts insanely easy. IsolateKit
   in its current state isn't really designed around using binary images.
 
-## Terminology
-
-- **Isolate:** A combination of multiple file system layers that can be run. The
-  IsolateKit equivalent of a Docker container.
-- **Unit:** Basically, the IsolateKit equivalent of a Docker image. Units are a single
-  file system that will be layered on top of others to generate a full isolate.
-- **Target:** A target tells IsolateKit how to run an isolate. It contains both a list
-  of units to run and a working directory where changes should be placed.
-
 ## Examples
 
 ```bash

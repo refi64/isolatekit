@@ -1,2 +1,4 @@
 bin/
+man/out/
+man/html/
 config.mk

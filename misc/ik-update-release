@@ -1,7 +1,8 @@
 #!/bin/sh
 
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-  echo 'usage: ik-update-version [<files>]'
+  echo 'usage: ik-update-release [<files>]'
+  exit
 fi
 
 date=`date -u +'%Y-%m-%dT%H:%M:%S'`
