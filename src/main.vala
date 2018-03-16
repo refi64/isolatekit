@@ -488,6 +488,13 @@ struct Unit {
   UnitStorageData storage;
 }
 
+DateTime rel_to_time(string rel) {
+  var time = Time.gm(0);
+  time.strptime(rel, "%Y-%m-%dT%H:%M:%S");
+  return new DateTime.utc(time.year + 1900, time.month, time.day, time.hour,
+                          time.minute, time.second);
+}
+
 enum ReadUnitRequirements { ANY, ALL_BUILDERS, ALL_BUILDERS_FIRST_BASE }
 
 Unit[] read_units_from_paths(UnitPath[] unit_paths, ReadUnitRequirements requirements,
@@ -815,8 +822,15 @@ void ensure_units(Unit[] units, HashSet<string>? dirty_ = null) {
         try {
           var kf = new KeyFile();
           kf.load_from_file(unit.storage.config.get_path(), KeyFileFlags.NONE);
-          if (kf.get_string("Unit", "Rel") != unit.rel) {
+
+          var current_rel = unit.rel;
+          var new_rel = kf.get_string("Unit", "Rel");
+          var cmp = rel_to_time(current_rel).compare(rel_to_time(new_rel));
+          if (cmp == 1) {
             unit.dirty = true;
+          } else if (cmp == -1) {
+            warn("Unit %s current rel %s is newer than %s; not marking as dirty.",
+                 unit.name, current_rel, new_rel);
           }
         } catch (Error e) {
           warn("Error reading %s storage config: %s", unit.name, e.message);
@@ -1339,8 +1353,7 @@ class InfoCommand : Command {
         } else {
           var time = Time.gm(0);
           time.strptime(unit.rel, "%Y-%m-%dT%H:%M:%S");
-          var dt = new DateTime.utc(time.year + 1900, time.month, time.day, time.hour,
-                                    time.minute, time.second);
+          var dt = rel_to_time(unit.rel);
 
           var fmt = "%B %d, %Y %H:%M:%S";
           var rel_utc = dt.format(fmt);
