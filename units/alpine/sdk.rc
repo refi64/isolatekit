@@ -1,9 +1,11 @@
 name=alpine/sdk
 type=builder
 props=()
-rel='2018-03-07T17:51:34'
+rel='2018-03-16T15:04:45'
 deps=(file:../alpine.rc)
 
 fn run {
-  apk add alpine-sdk
+  apk add alpine-sdk bash \
+    cmake extra-cmake-modules@testing linux-headers ninja \
+    autoconf automake libtool
 }

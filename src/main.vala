@@ -760,11 +760,14 @@ int run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_co
                                   .get_child("data"));
 
   // XXX: using string[] command = {...} here causes a C compilation error.
-  var command = new string[]{"systemd-nspawn", "--register=no",
+  var command = new string[]{"systemd-nspawn",
                              "--bind-ro=/run/isolatekit/data",
                              "--bind-ro=/run/isolatekit/script",
                              "-D", mountroot.get_path(), "--chdir=/root", "-q",
-                             "-M", name.replace("/", "_"), "-u", "0"};
+                             "-M", name.replace("/", "_"), "-u", "0",
+                             "-E", "ikthreads=3",
+                             "-E", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:" +
+                                        "/usr/bin:/sbin:/bin"};
 
   foreach (var bind in binds) {
     var arg = bind.rw ? "" : "-ro";
@@ -790,13 +793,15 @@ int run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_co
   return Process.exit_status(status);
 }
 
-void ensure_units(Unit[] units) {
+void ensure_units(Unit[] units, HashSet<string>? dirty_ = null) {
   var createunit = SystemProvider.get_script("createunit");
   var rc = SystemProvider.get_rc();
 
-  var dirty = new HashSet<string>();
+  var dirty = dirty_ ?? new HashSet<string>();
 
   foreach (var unit in units) {
+    ensure_units(unit.deps, dirty);
+
     if (unit.storage.base.query_exists()) {
       if (unit.storage.config.query_exists()) {
         try {
@@ -880,6 +885,9 @@ void ensure_units(Unit[] units) {
     if (unit.type == UnitType.BUILDER) {
       layers += units[0];
       func = "run";
+    }
+    foreach (var dep in unit.deps) {
+      layers += dep;
     }
 
     string[] run_command = {"/run/isolatekit/data/bin/rc", "-e",
