@@ -234,11 +234,25 @@ class GitUnitPath : UnitPath {
         fail("Failed to write test file %s: %s", test.get_path(), e.message);
       }
     } else if (update) {
-      println("Running ![cyan]git pull![/] for ![yellow]%s![/]...", url);
-
       int status;
+
+      println("Running ![cyan]git fetch --all![/] for ![yellow]%s![/]...", url);
       try {
-        string[] command = {"git", "pull", "--force"};
+        string[] command = {"git", "fetch", "--all"};
+        Process.spawn_sync(repo.get_path(), command, Environ.get(),
+                           SpawnFlags.SEARCH_PATH, null, null, null, out status);
+      } catch (SpawnError e) {
+        fail("Failed to spawn git: %s", e.message);
+      }
+
+      if (status != 0) {
+        fail("git failed with exit status %d.", status);
+      }
+
+      println("Running ![cyan]git reset --hard origin/master![/] for " +
+              "![yellow]%s![/]...", url);
+      try {
+        string[] command = {"git", "reset", "--hard", "origin/master"};
         Process.spawn_sync(repo.get_path(), command, Environ.get(),
                            SpawnFlags.SEARCH_PATH, null, null, null, out status);
       } catch (SpawnError e) {
