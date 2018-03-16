@@ -583,8 +583,9 @@ Unit[] read_units_from_paths(UnitPath[] unit_paths, ReadUnitRequirements require
       name_index_map[unit.name] = units.length;
       path_index_map[unit_script.get_path()] = units.length;
       units += unit;
-      local_units += unit;
     }
+
+    local_units += unit;
   }
 
   if (local_units.length != 0) {
@@ -772,7 +773,7 @@ int run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_co
                              "--bind-ro=/run/isolatekit/script",
                              "-D", mountroot.get_path(), "--chdir=/root", "-q",
                              "-M", name.replace("/", "_"), "-u", "0",
-                             "-E", "ikthreads=3",
+                             "-E", "ikthreads=2",
                              "-E", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:" +
                                         "/usr/bin:/sbin:/bin"};
 
