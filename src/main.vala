@@ -163,7 +163,7 @@ abstract class UnitPath {
   protected abstract File internal_retrieve(bool update);
 
   public File retrieve(bool update = false) {
-    if (retrieve_cache == null || !update) {
+    if (retrieve_cache == null || update) {
       retrieve_cache = internal_retrieve(update);
     }
     return retrieve_cache;
@@ -488,11 +488,14 @@ struct Unit {
   UnitStorageData storage;
 }
 
-Unit[] read_units_from_paths(UnitPath[] unit_paths, bool require_base = true,
+enum ReadUnitRequirements { ANY, ALL_BUILDERS, ALL_BUILDERS_FIRST_BASE }
+
+Unit[] read_units_from_paths(UnitPath[] unit_paths, ReadUnitRequirements requirements,
                              Unit[]? units_ = null,
                              HashMap<string, int>? name_index_map_ = null,
                              HashMap<string, int>? path_index_map_ = null) {
   var units = units_ ?? new Unit[]{};
+  var local_units = new Unit[]{};
   var name_index_map = name_index_map_ ?? new HashMap<string, int>();
   var path_index_map = path_index_map_ ?? new HashMap<string, int>();
 
@@ -540,8 +543,9 @@ Unit[] read_units_from_paths(UnitPath[] unit_paths, bool require_base = true,
                                       unit_path.retrieve().get_parent().get_path());
         }
 
-        var deps = read_units_from_paths(dep_paths, true, units, name_index_map,
-                                         path_index_map);
+        var deps = read_units_from_paths(dep_paths,
+                                         ReadUnitRequirements.ALL_BUILDERS_FIRST_BASE,
+                                         units, name_index_map, path_index_map);
 
         unit = Unit() {
           name = name,
@@ -579,24 +583,27 @@ Unit[] read_units_from_paths(UnitPath[] unit_paths, bool require_base = true,
       name_index_map[unit.name] = units.length;
       path_index_map[unit_script.get_path()] = units.length;
       units += unit;
+      local_units += unit;
     }
   }
 
-  if (units.length != 0) {
+  if (local_units.length != 0) {
     int start = 0;
-    if (require_base) {
-      if (units[0].type != UnitType.BASE) {
-        fail("First unit %s must be a base.", units[0].name);
+    if (requirements == ReadUnitRequirements.ALL_BUILDERS_FIRST_BASE) {
+      if (local_units[0].type != UnitType.BASE) {
+        fail("First unit %s must be a base.", local_units[0].name);
       }
       start = 1;
     }
-    foreach (var unit in units[start:units.length]) {
-      if (unit.type != UnitType.BUILDER) {
-        if (require_base) {
-          fail("%s is not the first unit, and therefore should not be a base.",
-               unit.name);
-        } else {
-          fail("%s must not be a base.", unit.name);
+    if (requirements != ReadUnitRequirements.ANY) {
+      foreach (var unit in local_units[start:local_units.length]) {
+        if (unit.type != UnitType.BUILDER) {
+          if (requirements == ReadUnitRequirements.ALL_BUILDERS_FIRST_BASE) {
+            fail("%s is not the first unit, and therefore should not be a base.",
+                 unit.name);
+          } else if (requirements == ReadUnitRequirements.ALL_BUILDERS) {
+            fail("%s must not be a base.", unit.name);
+          }
         }
       }
     }
@@ -1088,10 +1095,12 @@ class TargetCommand : Command {
       binds += bind;
     }
 
+    var requirements = target_present ? ReadUnitRequirements.ALL_BUILDERS
+                                      : ReadUnitRequirements.ALL_BUILDERS_FIRST_BASE;
     var add_units = read_units_from_paths(UnitPath.parse_paths(arg_add ?? ""),
-                                          !target_present);
+                                          requirements);
     var remove_units = read_units_from_paths(UnitPath.parse_paths(arg_remove ?? ""),
-                                             false);
+                                             ReadUnitRequirements.ALL_BUILDERS);
 
     Unit[] units = {};
 
@@ -1152,7 +1161,7 @@ class UpdateCommand : Command {
     }
 
     var passed = new HashSet<string>();
-    UnitPath[] paths = {};
+    Unit[] units = {};
 
     map_storage("unit", (name, _, kf) => {
       UnitPath path;
@@ -1168,17 +1177,14 @@ class UpdateCommand : Command {
       }
 
       path.retrieve(true);
-      paths += path;
-    });
-
-    Unit[] units = {};
-
-    foreach (var unit in read_units_from_paths(paths)) {
-      if (!(unit.storage.id in passed)) {
-        units += unit;
-        passed.add(unit.storage.id);
+      UnitPath[] paths = {path};
+      foreach (var unit in read_units_from_paths(paths, ReadUnitRequirements.ANY)) {
+        if (!(unit.storage.id in passed)) {
+          units += unit;
+          passed.add(unit.storage.id);
+        }
       }
-    }
+    });
 
     ensure_units(units);
   }
