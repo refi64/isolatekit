@@ -238,7 +238,7 @@ class GitUnitPath : UnitPath {
 
       int status;
       try {
-        string[] command = {"git", "pull"};
+        string[] command = {"git", "pull", "--force"};
         Process.spawn_sync(repo.get_path(), command, Environ.get(),
                            SpawnFlags.SEARCH_PATH, null, null, null, out status);
       } catch (SpawnError e) {
@@ -488,6 +488,30 @@ struct Unit {
   UnitStorageData storage;
 }
 
+class UnitArray {
+  private Unit[] data = {};
+
+  public UnitArray() {}
+
+  public int length {
+    get {
+      return data.length;
+    }
+  }
+
+  public Unit @get(int index) {
+    return data[index];
+  }
+
+  public void add(Unit item) {
+    data += item;
+  }
+
+  public Unit[] take() {
+    return data;
+  }
+}
+
 DateTime rel_to_time(string rel) {
   var time = Time.gm(0);
   time.strptime(rel, "%Y-%m-%dT%H:%M:%S");
@@ -497,14 +521,10 @@ DateTime rel_to_time(string rel) {
 
 enum ReadUnitRequirements { ANY, ALL_BUILDERS, ALL_BUILDERS_FIRST_BASE }
 
-Unit[] read_units_from_paths(UnitPath[] unit_paths, ReadUnitRequirements requirements,
-                             Unit[]? units_ = null,
-                             HashMap<string, int>? name_index_map_ = null,
-                             HashMap<string, int>? path_index_map_ = null) {
-  var units = units_ ?? new Unit[]{};
+Unit[] read_units_from_paths_i(UnitPath[] unit_paths, ReadUnitRequirements requirements,
+                               UnitArray units, HashMap<string, int> name_index_map,
+                               HashMap<string, int> path_index_map) {
   var local_units = new Unit[]{};
-  var name_index_map = name_index_map_ ?? new HashMap<string, int>();
-  var path_index_map = path_index_map_ ?? new HashMap<string, int>();
 
   var rc = SystemProvider.get_rc();
   var queryunit = SystemProvider.get_script("queryunit");
@@ -550,9 +570,9 @@ Unit[] read_units_from_paths(UnitPath[] unit_paths, ReadUnitRequirements require
                                       unit_path.retrieve().get_parent().get_path());
         }
 
-        var deps = read_units_from_paths(dep_paths,
-                                         ReadUnitRequirements.ALL_BUILDERS_FIRST_BASE,
-                                         units, name_index_map, path_index_map);
+        var deps = read_units_from_paths_i(dep_paths,
+                                           ReadUnitRequirements.ALL_BUILDERS_FIRST_BASE,
+                                           units, name_index_map, path_index_map);
 
         unit = Unit() {
           name = name,
@@ -589,7 +609,7 @@ Unit[] read_units_from_paths(UnitPath[] unit_paths, ReadUnitRequirements require
     } else {
       name_index_map[unit.name] = units.length;
       path_index_map[unit_script.get_path()] = units.length;
-      units += unit;
+      units.add(unit);
     }
 
     local_units += unit;
@@ -617,16 +637,28 @@ Unit[] read_units_from_paths(UnitPath[] unit_paths, ReadUnitRequirements require
     }
   }
 
-  return units;
+  return local_units;
 }
 
-// NOTE: This does NOT resolve dependencies, and it assumes all deps are already in
-// the id list.
-Unit[] read_units_from_ids(string[] unit_ids) {
-  Unit[] units = {};
-  var index_map = new HashMap<string, int>();
+Unit[] read_units_from_paths(UnitPath[] unit_paths, ReadUnitRequirements requirements) {
+  var units = new UnitArray();
+  var name_index_map = new HashMap<string, int>();
+  var path_index_map = new HashMap<string, int>();
+  read_units_from_paths_i(unit_paths, requirements, units, name_index_map,
+                          path_index_map);
+  return units.take();
+}
+
+Unit[] read_units_from_ids_i(string[] unit_ids, UnitArray units,
+                             HashMap<string, int> index_map) {
+  Unit[] local_units = {};
 
   foreach (var id in unit_ids) {
+    if (index_map.has_key(id)) {
+      local_units += units[index_map[id]];
+      continue;
+    }
+
     var storage = UnitStorageData.new_for_unit_id(id);
     if (!storage.base.query_exists()) {
       fail("Unit with id %s does not exist.", id);
@@ -640,13 +672,8 @@ Unit[] read_units_from_ids(string[] unit_ids) {
       var type = kf.get_string("Unit", "Type") == "base" ? UnitType.BASE
                  : UnitType.BUILDER;
 
-      Unit[] deps = {};
-      foreach (var dep_id in kf.get_string_list("Unit", "Deps")) {
-        if (!index_map.has_key(dep_id)) {
-          fail("Unit id %s should have come before %s (%s).", dep_id, id, name);
-        }
-        deps += units[index_map[dep_id]];
-      }
+      Unit[] deps = read_units_from_ids_i(kf.get_string_list("Unit", "Deps"), units,
+                                          index_map);
 
       var given_props = new HashMap<string, string>();
       if (kf.has_group("GivenProps")) {
@@ -669,13 +696,20 @@ Unit[] read_units_from_ids(string[] unit_ids) {
       };
 
       index_map[id] = units.length;
-      units += unit;
+      units.add(unit);
     } catch (Error e) {
       fail("Failed to load unit config for id %s: %s", id, e.message);
     }
   }
 
-  return units;
+  return local_units;
+}
+
+Unit[] read_units_from_ids(string[] unit_ids) {
+  var units = new UnitArray();
+  var index_map = new HashMap<string, int>();
+  read_units_from_ids_i(unit_ids, units, index_map);
+  return units.take();
 }
 
 struct BindMount {
@@ -757,8 +791,8 @@ int run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_co
     string[] options = {};
     string[] lower = {};
 
-    foreach (var layer in layers) {
-      lower += layer.storage.root.get_path().replace(":", "\\:");
+    for (var i = layers.length - 1; i >= 0; i--) {
+      lower += layers[i].storage.root.get_path().replace(":", "\\:");
     }
 
     options += @"lowerdir=$(join(lower, ":"))";
@@ -1319,7 +1353,8 @@ class InfoCommand : Command {
         }
       } else if (dirname == "unit") {
         string[] unit_ids = {path.get_basename()};
-        var unit = read_units_from_ids(unit_ids)[0];
+        var units = read_units_from_ids(unit_ids);
+        var unit = units[units.length - 1];
         var type = unit.type == UnitType.BASE ? "base" : "builder";
 
         if (arg_terse) {
