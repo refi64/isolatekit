@@ -1,0 +1,16 @@
+name=isolatekit/pv
+type=builder
+props=(version)
+rel='2018-03-16T01:17:39'
+deps=(file:../../alpine.rc file:../../alpine/sdk.rc)
+
+prop_version=1.6.6
+
+fn run {
+  ikget http://www.ivarch.com/programs/sources/pv-$prop_version.tar.bz2 pv.tar.bz2
+  ikextract -u pv.tar.bz2 .
+
+  ./configure CFLAGS=-static
+  make -j$ikthreads
+  cp pv $HOME
+}

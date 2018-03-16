@@ -1,0 +1,17 @@
+name=isolatekit/aria2c
+type=builder
+props=(version)
+rel='2018-03-16T01:17:39'
+deps=(file:../../alpine.rc file:../../alpine/sdk.rc)
+
+prop_version=1.33.1
+
+fn run {
+  ikget https://github.com/aria2/aria2/releases/download/release-$prop_version/aria2-$prop_version.tar.xz \
+    aria2c.tar.xz
+  ikextract -u aria2c.tar.xz .
+
+  ./configure --enable-shared=no --enable-static=yes ARIA2_STATIC=yes
+  make -j$ikthreads
+  cp src/aria2c $HOME
+}

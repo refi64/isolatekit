@@ -1,0 +1,21 @@
+name=isolatekit/rc
+type=builder
+props=(commit)
+rel='2018-03-16T01:17:39'
+deps=(file:../../alpine.rc file:../../alpine/sdk.rc)
+
+prop_commit=a32879322714f53ec044dabe4d20c44cb85be116
+
+fn run {
+  apk add bison
+
+  git clone https://github.com/rakitzis/rc
+  cd rc
+  git checkout $prop_commit
+
+  ./bootstrap
+  ./configure CFLAGS=-static
+  make -j$ikthreads
+  cp rc $HOME
+}
+
