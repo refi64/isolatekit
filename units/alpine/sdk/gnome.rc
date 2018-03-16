@@ -1,0 +1,11 @@
+name=alpine/sdk/gnome
+type=builder
+props=()
+rel='2018-03-16T20:24:08'
+deps=(file:../../alpine.rc file:../sdk.rc)
+
+fn run {
+  apk add clutter-dev gobject-introspection-dev gtk+2.0-dev gtk+3.0-dev gnome-common \
+    libgee-dev libnotify-dev librsvg-dev libsecret-dev meson vala
+  apk add --force-overwrite autoconf-archive@testing
+}

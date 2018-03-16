@@ -1,0 +1,19 @@
+name=alpine/sdk/gnome-static
+type=builder
+props=()
+rel='2018-03-12T16:57:29'
+deps=(file:../../alpine.rc file:../sdk.rc file:gnome.rc)
+
+fn run {
+  apk add glib-static m4
+
+  ikget https://github.com/GNOME/libgee/archive/0.20.1.tar.gz libgee.tar.xz
+  mkdir libgee
+  ikextract -u libgee.tar.xz libgee
+  cd libgee
+
+  ./autogen.sh --enable-static --disable-shared
+  sed -i 's/-l $(libgee_dlname)/#/' gee/Makefile
+  make -j$ikthreads install
+  cd ..
+}
