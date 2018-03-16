@@ -1,7 +1,7 @@
 name=isolatekit/bsdtar
 type=builder
 props=(version)
-rel='2018-03-16T01:17:39'
+rel='2018-03-16T17:52:50'
 deps=(file:../../alpine.rc file:../../alpine/sdk.rc)
 
 prop_version=3.3.2
@@ -12,7 +12,7 @@ fn run {
   git clone https://github.com/libarchive/libarchive -b v$prop_version --depth=1
   cd libarchive
 
-  build/autogen.sh
+  path=($path .) build/autogen.sh
   ./configure --disable-shared --enable-bsdtar=static
   make -j$ikthreads bsdtar LDFLAGS=-all-static
   cp bsdtar $HOME

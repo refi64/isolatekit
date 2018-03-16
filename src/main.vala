@@ -781,8 +781,8 @@ int run_in_unit(string name, File? storage_base_, Unit[] layers, string[] run_co
                              "-D", mountroot.get_path(), "--chdir=/root", "-q",
                              "-M", name.replace("/", "_"), "-u", "0",
                              "-E", "ikthreads=2",
-                             "-E", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:" +
-                                        "/usr/bin:/sbin:/bin"};
+                             "-E", "PATH=/run/isolatekit/data/sbin:/usr/local/sbin:" +
+                                   "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"};
 
   foreach (var bind in binds) {
     var arg = bind.rw ? "" : "-ro";
