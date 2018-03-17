@@ -1606,6 +1606,10 @@ class Main : Object {
   }
 
   public static int main(string[] args) {
+#if IK_STATIC
+    Environment.set_variable("GIO_MODULE_DIR", "", true);
+#endif
+
     string[] pkexec_args = {"pkexec", SystemProvider.get_self().get_path()};
     foreach (var arg in args[1:args.length]) {
       pkexec_args += arg;
