@@ -1060,9 +1060,9 @@ struct Target {
   }
 }
 
-delegate void StorageMapDelegate(string name, File path, KeyFile kf);
+delegate void StorageMapDelegate(string name, File path, KeyFile? kf);
 
-string map_storage(string dirname, StorageMapDelegate dl) {
+string map_storage(string dirname, StorageMapDelegate dl, bool ignore_fail = false) {
   var sect = dirname == "target" ? "Target" : "Unit";
 
   var dir = SystemProvider.get_storage_dir().get_child(dirname);
@@ -1079,8 +1079,13 @@ string map_storage(string dirname, StorageMapDelegate dl) {
       kf.load_from_file(config.get_path(), KeyFileFlags.NONE);
       name = kf.get_string(sect, "Name");
     } catch (Error e) {
-      warn("Failed to load %s: %s", path.get_path(), e.message);
-      continue;
+      if (ignore_fail) {
+        name = path.get_basename();
+        kf = null;
+      } else {
+        warn("Failed to load %s %s: %s", dirname, path.get_basename(), e.message);
+        continue;
+      }
     }
 
     dl(name, path, kf);
@@ -1485,6 +1490,45 @@ class RemoveCommand : Command {
   }
 }
 
+class GcCommand : Command {
+  public override string name {
+    get { return "gc"; }
+  }
+  public override string usage {
+    get { return "all|targets|units"; }
+  }
+  public override string description {
+    get { return "Clean up old, invalid units and targets."; }
+  }
+
+  public const OptionEntry[] options = {};
+
+  public override void run(string[] args) {
+    if (args.length != 1) {
+      fail("Expected 1 argument, got %d.", args.length);
+    } else if (args[0] != "all" && args[0] != "targets" && args[0] != "units") {
+      fail("Expected 'all', 'targets', or 'units', got '%s'.", args[0]);
+    }
+
+    string[] dirs = {};
+    if (args[0] == "all" || args[0] == "targets") {
+      dirs += "target";
+    }
+    if (args[0] == "all" || args[0] == "units") {
+      dirs += "unit";
+    }
+
+    foreach (var dirname in dirs) {
+      map_storage(dirname, (name, path, kf) => {
+        if (kf == null) {
+          println("Deleting ![magenta]%s![/] ![cyan]%s![/]...", dirname, name);
+          SystemProvider.recursive_remove(path);
+        }
+      }, true);
+    }
+  }
+}
+
 class Main : Object {
   private static string arg_resolve;
   private static bool arg_help;
@@ -1524,7 +1568,8 @@ class Main : Object {
       blankln();
 
       Command[] commands = {new TargetCommand(), new UpdateCommand(),
-                            new ListCommand(), new InfoCommand(), new RemoveCommand()};
+                            new ListCommand(), new InfoCommand(), new RemoveCommand(),
+                            new GcCommand()};
       foreach (var cmd in commands) {
         println("![yellow]  %-8s![/]%s", cmd.name, cmd.description);
       }
@@ -1587,6 +1632,10 @@ class Main : Object {
       case "remove":
         command = new RemoveCommand();
         append_options((OptionEntry[])RemoveCommand.options);
+        break;
+      case "gc":
+        command = new GcCommand();
+        append_options((OptionEntry[])GcCommand.options);
         break;
       }
     }
