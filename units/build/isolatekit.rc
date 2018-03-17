@@ -1,7 +1,7 @@
 name=isolatekit
 type=builder
 props=()
-rel='2018-03-17T00:36:54'
+rel='2018-03-17T00:40:39'
 deps=(file:../alpine.rc file:../alpine/sdk.rc file:../alpine/sdk/gnome.rc
       file:../alpine/sdk/gnome-static.rc)
 
@@ -12,7 +12,7 @@ fn run {
   cd isolatekit
   sed -i 's/warn(/_warn(/' src/main.vala
   make VALAFLAGS='-D IK_STATIC -X -static -X -lpcre -X -lffi -X -lgmodule-2.0 \
--X -lglib-2.0 -X -lz -X -lmount -X -lblkid -X -luuid'
+-X -lglib-2.0 -X -lz -X -lmount -X -lblkid -X -luuid -X -O2'
 
   cp bin/ik $HOME
 }
