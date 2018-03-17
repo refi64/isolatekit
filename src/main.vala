@@ -192,6 +192,8 @@ class GitUnitPath : UnitPath {
   private string url;
   private string file;
 
+  static HashSet<string> already_cloned = new HashSet<string>();
+
   public GitUnitPath(HashMap<string, string> props, string path, string url,
                      string file) {
     this.props = props;
@@ -233,7 +235,7 @@ class GitUnitPath : UnitPath {
       } catch (Error e) {
         fail("Failed to write test file %s: %s", test.get_path(), e.message);
       }
-    } else if (update) {
+    } else if (update && !(repo.get_path() in already_cloned)) {
       int status;
 
       println("Running ![cyan]git fetch --all![/] for ![yellow]%s![/]...", url);
@@ -263,6 +265,8 @@ class GitUnitPath : UnitPath {
         fail("git failed with exit status %d.", status);
       }
     }
+
+    already_cloned.add(repo.get_path());
 
     var child = File.new_for_path(@"$(repo.get_path())/$file");
     if (child.query_file_type(FileQueryInfoFlags.NONE) != FileType.REGULAR) {
