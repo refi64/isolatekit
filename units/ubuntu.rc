@@ -1,0 +1,23 @@
+name=ubuntu
+type=base
+props=(release date)
+rel='2018-03-27T22:51:20'
+
+prop_release=bionic
+prop_date=current
+
+fn create {
+  url=https://partner-images.canonical.com/core/$prop_release/$prop_date/ubuntu-$prop_release-core-cloudimg-amd64-root.tar.gz
+  ikget $url ubuntu.tgz
+
+  ikextract ubuntu.tgz $target
+}
+
+fn setup {
+  DEBIAN_FRONTEND=noninteractive
+
+  apt update
+  apt upgrade
+  apt install tzdata
+  echo 'exec /bin/bash' > /.isolatekit-enter
+}
