@@ -1,14 +1,17 @@
 name=fedora
 type=base
 props=(version)
-rel='2018-03-06T00:10:51'
+rel='2018-05-01T21:48:09'
 
-prop_version=27
+prop_version=28
 
 fn create {
-  url=https://dl.fedoraproject.org/pub/fedora/linux/releases/$prop_version/Docker/x86_64/images
+  dir=Container
+  if (~ $prop_version 2[1-7]) dir=Docker
+
+  url=https://dl.fedoraproject.org/pub/fedora/linux/releases/$prop_version/$dir/x86_64/images
   ikget $url images.html
-  files=`{grep -o 'Fedora-Docker-Base-27-[^"<]*' images.html}  # `
+  files=`{grep -o 'Fedora-'$dir'-Base-'$prop_version'-[^"<]*' images.html}  # `
   ikget $url/$files(1) fedora.txz
 
   ikextract -u fedora.txz . '*/layer.tar'
